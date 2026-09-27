@@ -1,26 +1,29 @@
 import AppKit
 import SwiftUI
 
-/// A dark "cinema" palette that matches the app icon: deep navy surfaces,
-/// amber for the main action and progress, mint for success, coral for errors.
+/// Dark charcoal surfaces with green accents: deep green for primary
+/// buttons, mint for labels and progress, coral for errors.
 enum Theme {
-    static let background = Color(hex: 0x11131C)
-    static let surface = Color(hex: 0x1A1D29)
-    static let surfaceRaised = Color(hex: 0x23273A)
-    static let logBackground = Color(hex: 0x0C0E15)
-    static let border = Color(hex: 0x2C3145)
+    static let background = Color(hex: 0x0B0F12)
+    static let surface = Color(hex: 0x12181C)
+    static let surfaceRaised = Color(hex: 0x1A2227)
+    static let logBackground = Color(hex: 0x080B0D)
+    static let border = Color(hex: 0x222C32)
 
-    static let text = Color(hex: 0xE8EAF2)
-    static let textSecondary = Color(hex: 0x8C92A8)
-    static let textFaint = Color(hex: 0x5C6279)
+    static let text = Color(hex: 0xECF1EF)
+    static let textSecondary = Color(hex: 0x9AA7A2)
+    static let textFaint = Color(hex: 0x5E6B66)
 
-    static let accent = Color(hex: 0xF5B82E)
-    static let onAccent = Color(hex: 0x1A1D29)
-    static let success = Color(hex: 0x4ADE9B)
-    static let warning = Color(hex: 0xFF9F43)
+    /// Primary buttons.
+    static let accent = Color(hex: 0x14805C)
+    static let onAccent = Color.white
+    /// Labels, highlights and the progress bar.
+    static let mint = Color(hex: 0x4FD6A0)
+    static let success = Color(hex: 0x4FD6A0)
+    static let warning = Color(hex: 0xF0B45A)
     static let error = Color(hex: 0xFF6B6B)
 
-    static let corner: CGFloat = 12
+    static let corner: CGFloat = 14
 }
 
 extension Color {
@@ -42,16 +45,16 @@ struct PillButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: small ? 11 : 13, weight: prominent ? .semibold : .medium))
-            .padding(.horizontal, small ? 9 : 14)
-            .padding(.vertical, small ? 4 : 7)
+            .padding(.horizontal, small ? 11 : 18)
+            .padding(.vertical, small ? 4 : 8)
             .foregroundColor(prominent ? Theme.onAccent : Theme.text)
             .background(
-                RoundedRectangle(cornerRadius: small ? 7 : 9)
+                Capsule()
                     .fill(prominent ? Theme.accent : Theme.surfaceRaised)
-                    .brightness(configuration.isPressed ? -0.12 : 0)
+                    .brightness(configuration.isPressed ? -0.08 : 0)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: small ? 7 : 9)
+                Capsule()
                     .stroke(prominent ? Color.clear : Theme.border, lineWidth: 1)
             )
             .scaleEffect(configuration.isPressed ? 0.96 : 1)
@@ -81,7 +84,7 @@ struct Card<Content: View>: View {
     }
 }
 
-/// Thin amber progress bar.
+/// Thin mint progress bar.
 struct ProgressBar: View {
     let value: Double
 
@@ -90,7 +93,7 @@ struct ProgressBar: View {
             ZStack(alignment: .leading) {
                 Capsule().fill(Theme.surfaceRaised)
                 Capsule()
-                    .fill(Theme.accent)
+                    .fill(LinearGradient(colors: [Theme.accent, Theme.mint], startPoint: .leading, endPoint: .trailing))
                     .frame(width: max(0, min(1, value)) * geo.size.width)
                     .animation(.easeOut(duration: 0.3), value: value)
             }

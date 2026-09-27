@@ -37,14 +37,14 @@ struct ContentView: View {
     private var dropZone: some View {
         ZStack {
             RoundedRectangle(cornerRadius: Theme.corner)
-                .fill(isTargeted ? Theme.accent.opacity(0.10) : Theme.surface)
+                .fill(isTargeted ? Theme.mint.opacity(0.08) : Theme.surface)
             RoundedRectangle(cornerRadius: Theme.corner)
                 .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [7, 6]))
-                .foregroundColor(isTargeted ? Theme.accent : Theme.border)
+                .foregroundColor(isTargeted ? Theme.mint : Theme.border)
             VStack(spacing: 10) {
                 Image(systemName: "captions.bubble.fill")
                     .font(.system(size: 30))
-                    .foregroundColor(Theme.accent)
+                    .foregroundColor(Theme.mint)
                 Text("Drop movies here")
                     .font(.system(size: 16, weight: .semibold))
                 Text("English subtitles are saved next to each movie as \"Movie.srt\", which VLC loads automatically.")
@@ -114,7 +114,7 @@ struct ContentView: View {
                 if queue.isRunning {
                     Text("\(Int(queue.progress * 100))%")
                         .font(.system(size: 12, weight: .semibold).monospacedDigit())
-                        .foregroundColor(Theme.accent)
+                        .foregroundColor(Theme.mint)
                     Button("Cancel") { queue.cancel() }
                         .buttonStyle(.pillSmall)
                 }
@@ -132,7 +132,7 @@ struct Header: View {
                 .frame(width: 30, height: 30)
             VStack(alignment: .leading, spacing: 1) {
                 Text("English Subtitle Maker")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: 16, weight: .bold))
                 Text("Whisper large-v3 on Groq")
                     .font(.system(size: 11))
                     .foregroundColor(Theme.textFaint)
@@ -158,9 +158,9 @@ struct SectionTitle: View {
 
     var body: some View {
         Text(title.uppercased())
-            .font(.system(size: 10, weight: .semibold))
-            .tracking(1.2)
-            .foregroundColor(Theme.textFaint)
+            .font(.system(size: 10, weight: .medium, design: .monospaced))
+            .tracking(2)
+            .foregroundColor(Theme.mint)
     }
 }
 
@@ -192,7 +192,7 @@ struct JobRow: View {
     @ViewBuilder private var statusView: some View {
         switch job.status {
         case .waiting: Text("Waiting").font(.system(size: 11)).foregroundColor(Theme.textFaint)
-        case .running: Text("Working…").font(.system(size: 11)).foregroundColor(Theme.accent)
+        case .running: Text("Working…").font(.system(size: 11)).foregroundColor(Theme.mint)
         case .done(let srt):
             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([srt]) }
                 .buttonStyle(.pillSmall)
@@ -210,7 +210,7 @@ struct APIKeyBar: View {
     var body: some View {
         Card(padding: 10) {
             HStack(spacing: 8) {
-                Image(systemName: "key.fill").foregroundColor(Theme.accent)
+                Image(systemName: "key.fill").foregroundColor(Theme.mint)
                 if queue.apiKey != nil && !editing {
                     Text("Groq API key saved").font(.system(size: 12))
                     Text("…\(String(queue.apiKey?.suffix(4) ?? ""))")
@@ -235,7 +235,7 @@ struct APIKeyBar: View {
                     }
                     Link("Get a free key", destination: URL(string: "https://console.groq.com/keys")!)
                         .font(.system(size: 11))
-                        .foregroundColor(Theme.accent)
+                        .foregroundColor(Theme.mint)
                 }
             }
         }
