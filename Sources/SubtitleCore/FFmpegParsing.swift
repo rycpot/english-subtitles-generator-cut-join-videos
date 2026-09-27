@@ -44,15 +44,14 @@ public struct MediaInfo: Equatable {
     }
 }
 
-public struct Silence: Equatable, Codable {
-    public let start: Double
-    public let end: Double
-    public init(start: Double, end: Double) {
-        self.start = start
-        self.end = end
+/// Loudness of a short slice of audio (0.1 s) starting at `time`.
+public struct LoudnessSample: Equatable {
+    public let time: Double
+    public let db: Double
+    public init(time: Double, db: Double) {
+        self.time = time
+        self.db = db
     }
-    public var duration: Double { end - start }
-    public var midpoint: Double { (start + end) / 2 }
 }
 
 public enum FFmpegOutput {
@@ -66,8 +65,6 @@ public enum FFmpegOutput {
     private static let audioStreamRegex = regex(#"^\s*Stream #\d+:\d+(?:\[0x[0-9a-fA-F]+\])?(?:\(([A-Za-z]+)\))?(?:\[0x[0-9a-fA-F]+\])?:\s*Audio:\s*(.+)$"#)
     private static let anyStreamRegex = regex(#"^\s*Stream #\d+:\d+"#)
     private static let titleRegex = regex(#"^\s+title\s*:\s*(.+)$"#)
-    private static let silenceStartRegex = regex(#"silence_start:\s*(-?[\d.]+)"#)
-    private static let silenceEndRegex = regex(#"silence_end:\s*(-?[\d.]+)"#)
 
     private static func captures(_ re: NSRegularExpression, in line: String) -> [String?]? {
         let range = NSRange(line.startIndex..., in: line)
@@ -128,23 +125,25 @@ public enum FFmpegOutput {
         return parts[hz + 1]
     }
 
-    /// Parses `silencedetect` lines from ffmpeg's stderr.
-    public static func parseSilences(_ lines: [String], totalDuration: Double?) -> [Silence] {
-        var result: [Silence] = []
-        var openStart: Double?
+    /// Parses the output of the loudness pass
+    /// (`asetnsamples,astats,ametadata=print:key=lavfi.astats.Overall.RMS_level`):
+    /// pairs of "frame:N pts:... pts_time:T" and "lavfi.astats.Overall.RMS_level=DB".
+    /// Silence ("-inf") becomes -120 dB.
+    public static func parseLoudness(_ lines: [String]) -> [LoudnessSample] {
+        var samples: [LoudnessSample] = []
+        var time: Double?
         for line in lines {
-            if let c = captures(silenceStartRegex, in: line), let v = Double(c[0] ?? "") {
-                openStart = max(0, v)
-            } else if let c = captures(silenceEndRegex, in: line), let v = Double(c[0] ?? "") {
-                let start = openStart ?? 0
-                if v > start { result.append(Silence(start: start, end: v)) }
-                openStart = nil
+            if let r = line.range(of: "pts_time:") {
+                let rest = line[r.upperBound...].prefix { !$0.isWhitespace }
+                time = Double(rest)
+            } else if let r = line.range(of: "RMS_level="), let t = time {
+                let value = line[r.upperBound...].trimmingCharacters(in: .whitespaces)
+                let db = Double(value).map { $0.isFinite ? max($0, -120) : -120 } ?? -120
+                samples.append(LoudnessSample(time: t, db: db))
+                time = nil
             }
         }
-        if let s = openStart, let total = totalDuration, total > s {
-            result.append(Silence(start: s, end: total))
-        }
-        return result
+        return samples
     }
 
     /// Reads a `-progress pipe:1` line and returns the position in seconds.

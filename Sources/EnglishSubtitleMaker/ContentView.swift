@@ -37,7 +37,7 @@ struct ContentView: View {
                     .foregroundColor(.secondary)
                 Text("Drop movie files here (.mp4, .mkv, …)")
                     .font(.headline)
-                Text("English subtitles are saved next to each movie as \"name.en.srt\", which VLC loads automatically.")
+                Text("English subtitles are saved next to each movie with the same name (\"Movie.srt\"), which VLC loads automatically.")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)

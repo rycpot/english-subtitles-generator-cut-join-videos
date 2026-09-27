@@ -68,15 +68,21 @@ final class FFmpegParsingTests: XCTestCase {
         XCTAssertEqual(six.audioStreams.first?.hasCentreChannel, false, "unnamed layouts have no FC to select")
     }
 
-    func testParsesSilences() {
+    func testParsesLoudness() {
+        // Real output of the loudness pass (ffmpeg 6.1).
         let lines = [
-            "[silencedetect @ 0x5650a5335b40] silence_start: 5.03469",
-            "[silencedetect @ 0x5650a5335b40] silence_end: 7.04 | silence_duration: 2.00531",
-            "size=N/A time=00:00:10.00 bitrate=N/A",
-            "[silencedetect @ 0x5650a5335b40] silence_start: 1496.02",
+            "frame:0    pts:0       pts_time:0",
+            "lavfi.astats.Overall.RMS_level=-22.486583",
+            "frame:51   pts:81600   pts_time:5.1",
+            "lavfi.astats.Overall.RMS_level=-153.932187",
+            "frame:52   pts:83200   pts_time:5.2",
+            "lavfi.astats.Overall.RMS_level=-inf",
         ]
-        let s = FFmpegOutput.parseSilences(lines, totalDuration: 1500)
-        XCTAssertEqual(s, [Silence(start: 5.03469, end: 7.04), Silence(start: 1496.02, end: 1500)])
+        XCTAssertEqual(FFmpegOutput.parseLoudness(lines), [
+            LoudnessSample(time: 0, db: -22.486583),
+            LoudnessSample(time: 5.1, db: -120),
+            LoudnessSample(time: 5.2, db: -120),
+        ])
     }
 
     func testProgressLines() {
@@ -96,33 +102,65 @@ final class FFmpegParsingTests: XCTestCase {
 }
 
 final class ChunkPlannerTests: XCTestCase {
-    func testShortAudioIsOnePart() {
-        XCTAssertEqual(ChunkPlanner.cutPoints(duration: 500, silences: []), [])
-    }
-
-    func testCutsAtLongestPauseInWindow() {
-        let silences = [Silence(start: 450, end: 450.5), Silence(start: 520, end: 523), Silence(start: 590, end: 591)]
-        let cuts = ChunkPlanner.cutPoints(duration: 1000, silences: silences)
-        XCTAssertEqual(cuts, [521.5])
-    }
-
-    func testFallsBackToHardCutWithoutPauses() {
-        XCTAssertEqual(ChunkPlanner.cutPoints(duration: 1500, silences: []), [600, 1200])
-    }
-
-    func testTwoHourFilmPartsStayWithinLimits() {
-        let silences = stride(from: 5.0, to: 7200, by: 7).map { Silence(start: $0, end: $0 + 2) }
-        let cuts = ChunkPlanner.cutPoints(duration: 7200, silences: silences)
-        let bounds = [0.0] + cuts + [7200]
-        for (a, b) in zip(bounds, bounds.dropFirst()) {
-            XCTAssertLessThanOrEqual(b - a, 615)
-            XCTAssertGreaterThan(b - a, 15)
+    /// 0.1 s samples: loud speech (-20 dB) with a pause (-60 dB) at the given times.
+    func envelope(duration: Double, pauses: [ClosedRange<Double>]) -> [LoudnessSample] {
+        stride(from: 0.0, to: duration, by: 0.1).map { t in
+            LoudnessSample(time: t, db: pauses.contains { $0.contains(t) } ? -60 : -20)
         }
-        XCTAssertEqual(cuts.count, 12)
     }
 
-    func testNoTinyTail() {
-        XCTAssertEqual(ChunkPlanner.cutPoints(duration: 610, silences: []), [])
+    func testShortAudioIsOnePart() {
+        XCTAssertEqual(ChunkPlanner.cutPoints(duration: 25, loudness: envelope(duration: 25, pauses: [])), [])
+    }
+
+    func testCutsInThePause() {
+        let cuts = ChunkPlanner.cutPoints(duration: 50, loudness: envelope(duration: 50, pauses: [20.0...20.6]))
+        XCTAssertEqual(cuts.count, 1)
+        XCTAssertGreaterThan(cuts[0], 20.0)
+        XCTAssertLessThan(cuts[0], 20.7)
+    }
+
+    func testPrefersTheQuietestMoment() {
+        var samples = envelope(duration: 50, pauses: [15.0...15.5, 24.0...24.5])
+        // The first pause is only a dip, not silence.
+        samples = samples.map { $0.time >= 15.0 && $0.time <= 15.5 ? LoudnessSample(time: $0.time, db: -35) : $0 }
+        let cuts = ChunkPlanner.cutPoints(duration: 50, loudness: samples)
+        XCTAssertGreaterThan(cuts[0], 24.0)
+        XCTAssertLessThan(cuts[0], 24.6)
+    }
+
+    func testIgnoresASingleQuietSliceInsideAWord() {
+        var samples = envelope(duration: 50, pauses: [22.0...22.5])
+        samples = samples.map { abs($0.time - 18.0) < 0.01 ? LoudnessSample(time: $0.time, db: -70) : $0 }
+        let cuts = ChunkPlanner.cutPoints(duration: 50, loudness: samples)
+        XCTAssertGreaterThan(cuts[0], 22.0)
+    }
+
+    func testFallsBackToFixedCutsWithoutLoudness() {
+        XCTAssertEqual(ChunkPlanner.cutPoints(duration: 70, loudness: []), [28, 56])
+    }
+
+    func testEveryPartFitsWhispersWindow() {
+        for duration in [29.0, 31.0, 60.0, 61.0, 7200.0] {
+            let samples = envelope(duration: duration, pauses: stride(from: 5.0, to: duration, by: 7).map { $0...($0 + 0.8) })
+            let cuts = ChunkPlanner.cutPoints(duration: duration, loudness: samples)
+            let bounds = [0.0] + cuts + [duration]
+            for (a, b) in zip(bounds, bounds.dropFirst()) {
+                XCTAssertLessThanOrEqual(b - a, ChunkPlanner.hardMax, "duration \(duration)")
+                XCTAssertGreaterThan(b - a, 0)
+            }
+        }
+    }
+
+    func testTinyTailJoinsLastPart() {
+        XCTAssertEqual(ChunkPlanner.cutPoints(duration: 29.5, loudness: []), [])
+    }
+
+    func testPeakLevelsFindSilentParts() {
+        let samples = envelope(duration: 60, pauses: [30.0...60.0])
+        let peaks = ChunkPlanner.peakLevels(samples, parts: [(start: 0, end: 30), (start: 30.2, end: 60)])
+        XCTAssertEqual(peaks[0]!, -20, accuracy: 1e-9)
+        XCTAssertEqual(peaks[1]!, -60, accuracy: 1e-9)
     }
 }
 

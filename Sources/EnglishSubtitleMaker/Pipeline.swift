@@ -9,19 +9,24 @@ struct ChunkPlan: Codable {
         let file: String
         let start: Double
         let end: Double
+        /// No sound worth sending (checked with the loudness pass).
+        var silent = false
     }
-    var version = 1
+    var version = 2
     var mimeType: String
     var duration: Double
     var track: String
     var parts: [Part]
 }
 
-/// Turns one video file into `<name>.en.srt`:
-/// probe → extract mono 16 kHz audio → find pauses → split into ~10 min parts
-/// → Groq translates each part to English → build and save the SRT.
+/// Turns one video file into `<name>.srt`:
+/// probe → extract mono 16 kHz audio → measure loudness → split into ≤30 s
+/// parts at quiet moments → Groq translates each part to English → build and save the SRT.
 final class Pipeline {
-    static let partLength: Double = 600
+    /// Groq's free tier allows 20 requests a minute; stay just under it.
+    static let minSecondsBetweenRequests: Double = 3.1
+    /// Parts whose loudest moment is quieter than this are not uploaded.
+    static let silenceThresholdDB: Double = -50
 
     let input: URL
     let ffmpeg: URL
@@ -42,7 +47,7 @@ final class Pipeline {
     }
 
     var outputURL: URL {
-        input.deletingPathExtension().appendingPathExtension("en").appendingPathExtension("srt")
+        input.deletingPathExtension().appendingPathExtension("srt")
     }
 
     /// Runs the whole job. With `prepareOnly`, stops after splitting the audio
@@ -69,19 +74,30 @@ final class Pipeline {
 
         var results: [ChunkResult] = []
         var previousText: String?
+        var lastRequest: Date?
+        var uploaded = 0
+        let total = plan.parts.count
         for (i, part) in plan.parts.enumerated() {
             try Task.checkCancellation()
-            let label = "Part \(i + 1) of \(plan.parts.count) (\(Self.clock(part.start))–\(Self.clock(part.end)))"
+            let label = "Part \(i + 1)/\(total) (\(Self.clock(part.start))–\(Self.clock(part.end)))"
+            if part.silent {
+                results.append(ChunkResult(offset: part.start, length: part.end - part.start, segments: []))
+                previousText = nil
+                continue
+            }
             let resultFile = resultURL(workDir, i)
             var response: GroqVerboseResponse?
             if let data = try? Data(contentsOf: resultFile) {
                 response = try? JSONDecoder().decode(GroqVerboseResponse.self, from: data)
-                if response != nil { log(.detail, "\(label): already translated, skipping.") }
             }
             if response == nil {
-                progress(0.30 + 0.68 * Double(i) / Double(plan.parts.count), "Translating \(label.lowercased())…")
-                log(.info, "\(label): uploading to Groq…")
-                let started = Date()
+                progress(0.30 + 0.68 * Double(i) / Double(total),
+                         "Translating part \(i + 1) of \(total) (\(Self.clock(part.start)))…")
+                if let lastRequest {
+                    let wait = Self.minSecondsBetweenRequests - Date().timeIntervalSince(lastRequest)
+                    if wait > 0 { try await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000)) }
+                }
+                lastRequest = Date()
                 let data = try await client.translate(file: workDir.appendingPathComponent(part.file),
                                                       mimeType: plan.mimeType, prompt: previousText)
                 do {
@@ -91,19 +107,32 @@ final class Pipeline {
                     throw SubtitleError(.badResponse, snippet)
                 }
                 try? data.write(to: resultFile, options: .atomic)
-                let lines = response?.segments?.count ?? 0
-                log(.info, "\(label): done in \(Int(Date().timeIntervalSince(started))) s, \(lines) lines.")
+                uploaded += 1
             }
             let segments = response?.segments ?? []
-            results.append(ChunkResult(offset: part.start, length: part.end - part.start, segments: segments))
+            let result = ChunkResult(offset: part.start, length: part.end - part.start, segments: segments)
+            results.append(result)
+            let kept = segments.filter { !SubtitleBuilder.isLikelyHallucination($0) }
+            log(.detail, "\(label): \(kept.count) line\(kept.count == 1 ? "" : "s")"
+                + (kept.count < segments.count ? " (\(segments.count - kept.count) dropped as noise)" : "")
+                + ": \(kept.map { SubtitleBuilder.cleaned($0.text) }.joined(separator: " / ").prefix(90))")
             // Give the next part the last lines as context for names and style.
-            let tail = segments.suffix(2).map(\.text).joined(separator: " ").trimmingCharacters(in: .whitespaces)
+            let tail = kept.suffix(2).map(\.text).joined(separator: " ").trimmingCharacters(in: .whitespaces)
             previousText = tail.isEmpty ? nil : String(tail.suffix(300))
         }
+        let silentCount = plan.parts.filter(\.silent).count
+        log(.info, "Translated \(total - silentCount) parts" + (silentCount > 0 ? ", skipped \(silentCount) silent" : "") + ".")
 
         progress(0.99, "Writing subtitles…")
         let cues = SubtitleBuilder.buildCues(from: results)
         guard !cues.isEmpty else { throw SubtitleError(.noSpeech) }
+        if fm.fileExists(atPath: outputURL.path) {
+            let backup = outputURL.appendingPathExtension("bak")
+            try? fm.removeItem(at: backup)
+            if (try? fm.moveItem(at: outputURL, to: backup)) != nil {
+                log(.info, "Existing \(outputURL.lastPathComponent) kept as \(backup.lastPathComponent).")
+            }
+        }
         do {
             try SubtitleBuilder.srt(from: cues).write(to: outputURL, atomically: true, encoding: .utf8)
         } catch {
@@ -171,14 +200,16 @@ final class Pipeline {
             throw SubtitleError(.audioExtractFailed, "extracted audio has no length")
         }
 
-        // 3. Find pauses so parts are cut between sentences.
-        log(.info, "Finding pauses in the dialogue…")
-        let detect = try await runFFmpeg(["-hide_banner", "-nostdin", "-i", full.path,
-                                          "-af", "silencedetect=noise=-30dB:d=0.35",
-                                          "-progress", "pipe:1", "-nostats", "-f", "null", "-"],
-                                         total: duration, range: (0.22, 0.27), step: "Finding pauses…")
-        let silences = FFmpegOutput.parseSilences(detect.stderrLines, totalDuration: duration)
-        let cuts = ChunkPlanner.cutPoints(duration: duration, silences: silences, target: Self.partLength)
+        // 3. Measure loudness every 0.1 s to find the quiet moments between phrases.
+        log(.info, "Measuring loudness to find pauses…")
+        let envelope = try await runFFmpeg(["-hide_banner", "-nostdin", "-i", full.path,
+                                            "-af", "asetnsamples=n=1600:p=0,astats=metadata=1:reset=1:measure_perchannel=none:measure_overall=RMS_level,ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-",
+                                            "-f", "null", "-"],
+                                           captureStdout: true, total: duration, range: (0.22, 0.27),
+                                           step: "Finding pauses…", progressFromPTS: true)
+        let loudness = FFmpegOutput.parseLoudness(envelope.stdout.components(separatedBy: "\n"))
+        if loudness.isEmpty { log(.warning, "Could not measure loudness; cutting at fixed points.") }
+        let cuts = ChunkPlanner.cutPoints(duration: duration, loudness: loudness)
 
         // 4. Split.
         progress(0.28, "Splitting audio…")
@@ -205,8 +236,17 @@ final class Pipeline {
             }
             try? fm.removeItem(at: full)
         }
-        let avg = duration / Double(parts.count) / 60
-        log(.info, "Split into \(parts.count) part\(parts.count == 1 ? "" : "s") (about \(Int(avg.rounded())) min each).")
+        let peaks = ChunkPlanner.peakLevels(loudness, parts: parts.map { ($0.start, $0.end) })
+        for i in parts.indices {
+            if let peak = peaks[i], peak < Self.silenceThresholdDB { parts[i].silent = true }
+        }
+        let longest = parts.map { $0.end - $0.start }.max() ?? 0
+        let silentCount = parts.filter(\.silent).count
+        log(.info, "Split into \(parts.count) part\(parts.count == 1 ? "" : "s") (longest \(Int(longest.rounded(.up))) s)"
+            + (silentCount > 0 ? ", \(silentCount) silent." : "."))
+        let requests = parts.count - silentCount
+        let minutes = max(1, Int((Double(requests) * Self.minSecondsBetweenRequests / 60).rounded(.up)))
+        log(.info, "Estimated time: about \(minutes) min (\(requests) requests to Groq).")
 
         let plan = ChunkPlan(mimeType: mime, duration: duration, track: track.summary, parts: parts)
         try JSONEncoder().encode(plan).write(to: workDir.appendingPathComponent("plan.json"), options: .atomic)
@@ -222,15 +262,19 @@ final class Pipeline {
         var stderrTail: String { stderrLines.suffix(8).joined(separator: "\n") }
     }
 
+    /// - Parameter progressFromPTS: read progress from "pts_time:" lines
+    ///   (the loudness pass prints those instead of `-progress` output).
     private func runFFmpeg(_ args: [String], captureStdout: Bool = false, total: Double? = nil,
-                           range: (Double, Double)? = nil, step: String = "") async throws -> FFmpegRun {
+                           range: (Double, Double)? = nil, step: String = "",
+                           progressFromPTS: Bool = false) async throws -> FFmpegRun {
         let stdoutBox = StringBox()
         let progress = self.progress
         let result: ProcessResult
         do {
             result = try await ProcessRunner.run(ffmpeg, args, onStdoutLine: { line in
                 if captureStdout { stdoutBox.append(line) }
-                if let total, total > 0, let range, let t = FFmpegOutput.progressSeconds(fromLine: line) {
+                if let total, total > 0, let range,
+                   let t = progressFromPTS ? Self.ptsTime(line) : FFmpegOutput.progressSeconds(fromLine: line) {
                     let frac = min(1, max(0, t / total))
                     progress(range.0 + (range.1 - range.0) * frac, step)
                 }
@@ -247,7 +291,7 @@ final class Pipeline {
         let attrs = (try? FileManager.default.attributesOfItem(atPath: input.path)) ?? [:]
         let size = (attrs[.size] as? NSNumber)?.int64Value ?? 0
         let mtime = (attrs[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
-        let identity = "\(input.path)|\(size)|\(mtime)|\(settings.model)|\(settings.dialogueFocus)|v1"
+        let identity = "\(input.path)|\(size)|\(mtime)|\(settings.model)|\(settings.dialogueFocus)|v2"
         let hash = SHA256.hash(data: Data(identity.utf8)).map { String(format: "%02x", $0) }.joined().prefix(16)
         let dir = AppPaths.cache.appendingPathComponent(String(hash), isDirectory: true)
         do {
@@ -262,7 +306,7 @@ final class Pipeline {
     private func loadPlan(in workDir: URL) -> ChunkPlan? {
         let fm = FileManager.default
         guard let data = try? Data(contentsOf: workDir.appendingPathComponent("plan.json")),
-              let plan = try? JSONDecoder().decode(ChunkPlan.self, from: data), plan.version == 1, !plan.parts.isEmpty
+              let plan = try? JSONDecoder().decode(ChunkPlan.self, from: data), plan.version == 2, !plan.parts.isEmpty
         else { return nil }
         for (i, part) in plan.parts.enumerated()
         where !fm.fileExists(atPath: resultURL(workDir, i).path)
@@ -274,6 +318,11 @@ final class Pipeline {
 
     private func resultURL(_ workDir: URL, _ index: Int) -> URL {
         workDir.appendingPathComponent(String(format: "result_%03d.json", index))
+    }
+
+    private static func ptsTime(_ line: String) -> Double? {
+        guard let r = line.range(of: "pts_time:") else { return nil }
+        return Double(line[r.upperBound...].prefix { !$0.isWhitespace })
     }
 
     static func clock(_ seconds: Double) -> String {

@@ -57,20 +57,43 @@ jobs:
             -map 0:v -map "[a1]" -map "[a2]" -t 1500 -c:v mpeg4 -c:a aac \
             -metadata:s:a:0 language=hin -metadata:s:a:0 title=Hindi -metadata:s:a:1 language=eng \
             -disposition:a:0 0 -disposition:a:1 default "$RUNNER_TEMP/test film.mkv"
-          # 2 min single-track mp4.
+          # 2 min single-track mp4: 1 min of continuous sound, then 1 min of silence.
           arch -x86_64 "$FF" -hide_banner -loglevel error -y \
             -f lavfi -i color=c=black:s=160x90:r=5 -f lavfi -i "sine=f=300:d=120" \
+            -af "volume=enable='gte(t,60)':volume=0" \
             -t 120 -c:v mpeg4 -c:a aac "$RUNNER_TEMP/short.mp4"
+
+          # Every part must fit Whisper's 30 s window and the parts must cover the film.
+          check_plan() {
+            grep '^PLAN: ' "$1" | sed 's/^PLAN: //' | python3 -c '
+          import json, sys
+          plan = json.load(sys.stdin)
+          parts = plan["parts"]
+          prev = 0.0
+          for p in parts:
+              length = p["end"] - p["start"]
+              assert length <= 30.1, f"part too long: {p}"
+              assert abs(p["start"] - prev) < 0.1, f"gap before {p}"
+              prev = p["end"]
+          duration = plan["duration"]
+          assert abs(prev - duration) < 0.5, f"parts end at {prev}, audio at {duration}"
+          silent = sum(1 for p in parts if p["silent"])
+          longest = max(p["end"] - p["start"] for p in parts)
+          print(f"{len(parts)} parts, longest {longest:.2f} s, {silent} silent")
+          if len(sys.argv) > 1 and sys.argv[1]:
+              assert silent >= int(sys.argv[1]), "expected silent parts"
+          ' "${2:-}"
+          }
 
           arch -x86_64 "$BIN" --selftest "$RUNNER_TEMP/test film.mkv" | tee mkv.log
           grep -q "^OK$" mkv.log
           grep -q "Using audio track 1, hin" mkv.log
           grep -q "centre (dialogue) channel" mkv.log
-          grep -q "Split into 3 parts" mkv.log
+          check_plan mkv.log
 
           arch -x86_64 "$BIN" --selftest "$RUNNER_TEMP/short.mp4" | tee mp4.log
           grep -q "^OK$" mp4.log
-          grep -q "Split into 1 part " mp4.log
+          check_plan mp4.log 2
 
           # Unreadable input must fail cleanly with its error code.
           head -c 1000 /dev/urandom > "$RUNNER_TEMP/junk.mkv"

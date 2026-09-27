@@ -66,7 +66,7 @@ public enum ErrorCode: String, CaseIterable {
         case .apiForbidden:
             return "Your Groq account cannot use this model, or access is blocked from your network."
         case .fileTooLarge:
-            return "Should not happen (parts are ~5 MB). Please report it with the log."
+            return "Should not happen (parts are under 0.3 MB). Please report it with the log."
         case .badRequest:
             return "See Groq's message in the log above."
         case .rateLimitExhausted:

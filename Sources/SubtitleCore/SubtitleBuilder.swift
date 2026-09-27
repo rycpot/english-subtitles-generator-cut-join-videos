@@ -53,7 +53,7 @@ public enum SubtitleBuilder {
             .trimmingCharacters(in: CharacterSet(charactersIn: ". "))
     }
 
-    static func cleaned(_ text: String) -> String {
+    public static func cleaned(_ text: String) -> String {
         text.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.joined(separator: " ")
     }
 

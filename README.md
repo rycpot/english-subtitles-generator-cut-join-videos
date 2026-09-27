@@ -1,8 +1,8 @@
 # English Subtitle Maker
 
-A small macOS app: **drop a foreign-language movie (.mp4, .mkv, …) on it and get English subtitles** (`Movie.en.srt`) saved next to the movie. VLC picks them up automatically.
+A small macOS app: **drop a foreign-language movie (.mp4, .mkv, …) on it and get English subtitles** (`Movie.srt`) saved next to the movie. VLC picks them up automatically. If a `Movie.srt` already exists, it is kept as `Movie.srt.bak`.
 
-The speech recognition and translation run on [Groq](https://groq.com)'s free Whisper API (`whisper-large-v3`), so it's fast even on an older Mac. A 2-hour film usually takes **about 5–10 minutes**, depending on your upload speed.
+The speech recognition and translation run on [Groq](https://groq.com)'s free Whisper API (`whisper-large-v3`), so it's fast even on an older Mac. A 2-hour film takes **about 15 minutes**: that pace is set by the free tier's limit of 20 requests a minute. The log shows an estimate when a job starts.
 
 - Runs on **macOS 12 Monterey or later** and is built for **Intel Macs** (it also runs on Apple Silicon through Rosetta).
 - **Free**: needs only a free Groq account. Nothing is installed besides the app, which bundles its own ffmpeg.
@@ -12,7 +12,7 @@ The speech recognition and translation run on [Groq](https://groq.com)'s free Wh
 
 1. **Read the file.** ffmpeg lists the audio tracks. If there are several, the app picks the first one *not* tagged English, so it skips English dubs.
 2. **Extract the audio** as mono, 16 kHz MP3 (what Whisper uses internally). On 5.1/7.1 tracks it keeps only the centre channel, where film dialogue is mixed, which cuts out music and effects.
-3. **Split the audio into ~10-minute parts**, cutting in pauses so no sentence is split. Each part is about 5 MB; Groq's free tier accepts up to 25 MB.
+3. **Split the audio into parts of 30 seconds or less**, cut at the quietest moment between phrases (measured every 0.1 s, so it works even over background music). Whisper listens in 30-second windows. On longer files it uses its own guessed timestamps to decide where the next window starts, and when translating (especially Telugu, Tamil and similar languages) those guesses go wrong: speech is skipped and subtitles drift out of sync after the first 30 seconds. One window per part avoids that. Silent parts are not uploaded at all.
 4. **Upload each part** to Groq's `/audio/translations` endpoint. Whisper transcribes and translates to English in one step and returns the text with timestamps.
 5. **Build the SRT.** It shifts timestamps to film time, removes known Whisper "hallucinations" (such as "Thanks for watching!" over music), merges repeats, splits long lines (max 2 lines × 42 characters), and caps how long a short line stays on screen.
 
@@ -26,8 +26,9 @@ As published by Groq when this was written; they may change:
 |---|---|---|
 | Audio per hour | 7,200 s (2 h) | About one feature film per hour. If a long film goes over, the app **waits automatically** and continues. |
 | Audio per day | 28,800 s (8 h) | About 3–4 films a day. |
-| File size | 25 MB | The app's parts are ~5 MB. |
-| Requests per minute | 20 | Not a concern (one request per 10 minutes of film). |
+| File size | 25 MB | The app's parts are under 0.3 MB. |
+| Requests per minute | 20 | The app sends at most one request every 3.1 s to stay under this; it sets the ~15 min per 2-hour film. |
+| Requests per day | 2,000 | About 250 requests per 2-hour film, so the audio limit above is reached first. |
 
 ## Install (first time)
 
@@ -51,7 +52,7 @@ As published by Groq when this was written; they may change:
 ## Use
 
 - Drag one or more movies (or a folder) onto the window or onto the app's Dock icon. You can also click **Choose Files…**.
-- Watch the progress bar and log. When the job finishes, `Movie.en.srt` sits next to `Movie.mkv`.
+- Watch the progress bar and log. When the job finishes, `Movie.srt` sits next to `Movie.mkv`. The log lists each part's English lines, so you can see where Whisper returned nothing.
 - Open the movie in VLC and the subtitles appear. If they don't, use **Subtitle → Add Subtitle File…** in VLC.
 - If macOS asks for access to Downloads, Desktop or another folder, click **OK**. The app needs it to save the `.srt` next to the movie.
 
