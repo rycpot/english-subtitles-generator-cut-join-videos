@@ -45,6 +45,7 @@ jobs:
 
       - name: Self-test the packaged app (probe, extract, find pauses, split)
         run: |
+          set -o pipefail
           APP="dist/English Subtitle Maker.app"
           FF="$APP/Contents/Resources/ffmpeg"
           BIN="$APP/Contents/MacOS/EnglishSubtitleMaker"
