@@ -8,9 +8,10 @@ Turns a foreign-language movie (.mp4, .mkv, …) into English subtitles (`Movie.
 4. Paste your free Groq API key (from https://console.groq.com/keys) into the box at the top, then drop a movie on the window.
 
 **What's in this version**
-- Audio is sent to Whisper in parts of 30 seconds or less, cut at quiet moments. This stops subtitles from skipping lines and drifting out of sync after the first 30 seconds.
-- Silent stretches are not uploaded.
-- Subtitles are saved as `Movie.srt`. An existing `Movie.srt` is kept as `Movie.srt.bak`.
-- A 2-hour film takes about 15 minutes, limited by Groq's free tier of 20 requests a minute. The log shows an estimate and each part's English lines.
+- **Film language menu** (under the key box): choose the language spoken in the film instead of letting Whisper guess for each 30-second part. If Groq doesn't accept a language setting for translation, the log says so and the job continues with automatic detection.
+- **Audio track picker:** when a file has several audio tracks (e.g. original + English dub), the app asks which one to use, with its best guess preselected.
+- **Visible click feedback:** "Copy Log" briefly shows a green "✓ Copied", and the small buttons now look pressed when clicked.
+
+Earlier (v1.0.0): audio is sent to Whisper in parts of 30 seconds or less so subtitles stay in sync; subtitles are saved as `Movie.srt` (an existing one is kept as `Movie.srt.bak`); a 2-hour film takes about 15 minutes on Groq's free tier.
 
 See the README for error codes and details.
