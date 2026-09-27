@@ -5,22 +5,19 @@ import SubtitleCore
 struct GroqHTTPError: Error {
     let status: Int
     let message: String
-
-    var isModelUnavailable: Bool {
-        let m = message.lowercased()
-        return status == 404 || (m.contains("model") && (m.contains("not found") || m.contains("does not exist")
-            || m.contains("decommissioned") || m.contains("not available") || m.contains("no access")))
-    }
 }
 
-/// Talks to Groq's OpenAI-compatible API, with retries for rate limits,
+/// Talks to Groq's OpenAI-compatible audio API, with retries for rate limits,
 /// server hiccups and flaky connections.
 struct GroqClient {
     let apiKey: String
     let log: (LogLevel, String) -> Void
+    /// Shows a short status (e.g. a rate-limit countdown) in the window.
+    var status: ((String) -> Void)? = nil
 
-    /// Waits longer than this are treated as "free limit used up for now".
-    static let maxRateLimitWait: Double = 20 * 60
+    /// The hourly audio limit frees up within the hour, so waits up to this
+    /// long are sat out automatically; longer ones mean the daily limit.
+    static let maxRateLimitWait: Double = 65 * 60
     static let maxTransientRetries = 4
 
     private static let session: URLSession = {
@@ -50,20 +47,8 @@ struct GroqClient {
 
     // MARK: Audio
 
-    /// One step: Whisper hears the part and writes English. Returns verbose_json.
+    /// Whisper hears one audio part and writes English. Returns verbose_json.
     func translateAudio(file: URL, mimeType: String, model: String, prompt: String?) async throws -> Data {
-        try await audioRequest(Groq.translationsURL, file: file, mimeType: mimeType, model: model,
-                               prompt: prompt, language: nil)
-    }
-
-    /// Whisper writes down the words in the given language. Returns verbose_json.
-    func transcribeAudio(file: URL, mimeType: String, model: String, prompt: String?, language: String) async throws -> Data {
-        try await audioRequest(Groq.transcriptionsURL, file: file, mimeType: mimeType, model: model,
-                               prompt: prompt, language: language)
-    }
-
-    private func audioRequest(_ url: URL, file: URL, mimeType: String, model: String,
-                              prompt: String?, language: String?) async throws -> Data {
         let audio: Data
         do {
             audio = try Data(contentsOf: file)
@@ -79,10 +64,9 @@ struct GroqClient {
         form.addField("response_format", "verbose_json")
         form.addField("temperature", "0")
         if let prompt, !prompt.isEmpty { form.addField("prompt", prompt) }
-        if let language { form.addField("language", language) }
         form.addFile("file", filename: file.lastPathComponent, mimeType: mimeType, data: audio)
 
-        var req = URLRequest(url: url)
+        var req = URLRequest(url: Groq.translationsURL)
         req.httpMethod = "POST"
         req.setValue(form.contentType, forHTTPHeaderField: "Content-Type")
         do {
@@ -90,48 +74,6 @@ struct GroqClient {
         } catch let error as GroqHTTPError {
             if error.status == 413 { throw SubtitleError(.fileTooLarge, error.message) }
             throw SubtitleError(.badRequest, error.message)
-        }
-    }
-
-    // MARK: Text
-
-    /// Sends a chat completion and returns the reply text.
-    /// Optional parameters Groq rejects for a model (e.g. reasoning settings)
-    /// are dropped and the request is repeated.
-    func chat(model: String, system: String, user: String) async throws -> String {
-        var optional: [String: Any] = [
-            "response_format": ["type": "json_object"],
-            "reasoning_effort": model.contains("gpt-oss") ? "low" : "none",
-            "include_reasoning": false,
-        ]
-        while true {
-            var payload: [String: Any] = [
-                "model": model,
-                "temperature": 0.2,
-                "max_completion_tokens": 4096,
-                "messages": [
-                    ["role": "system", "content": system],
-                    ["role": "user", "content": user],
-                ],
-            ]
-            payload.merge(optional) { a, _ in a }
-            var req = URLRequest(url: Groq.chatURL)
-            req.httpMethod = "POST"
-            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            let body = try JSONSerialization.data(withJSONObject: payload)
-            do {
-                let data = try await send(req, body: body)
-                guard let reply = try? JSONDecoder().decode(ChatCompletionResponse.self, from: data),
-                      let content = reply.choices.first?.message.content else {
-                    throw SubtitleError(.badResponse, String(decoding: data.prefix(300), as: UTF8.self))
-                }
-                return content
-            } catch let error as GroqHTTPError where error.status == 400 {
-                let message = error.message.lowercased()
-                guard let rejected = optional.keys.first(where: { message.contains($0) }) else { throw error }
-                log(.detail, "\(model) does not support \"\(rejected)\"; retrying without it.")
-                optional.removeValue(forKey: rejected)
-            }
         }
     }
 
@@ -186,7 +128,7 @@ struct GroqClient {
                 if wait >= 5 {
                     log(.warning, "Groq free-tier limit hit. Waiting \(Self.describe(wait)) then continuing automatically…")
                 }
-                try await Self.sleep(wait + 1, countdown: log)
+                try await Self.sleep(wait + 1, countdown: log, status: status)
             case 400..<500:
                 throw GroqHTTPError(status: http.statusCode, message: message)
             default:
@@ -208,15 +150,21 @@ struct GroqClient {
         return "\(s / 3600) h \((s % 3600) / 60) min"
     }
 
-    /// Sleeps (cancellably), optionally logging a countdown every minute.
-    static func sleep(_ seconds: Double, countdown: ((LogLevel, String) -> Void)? = nil) async throws {
+    /// Sleeps (cancellably), optionally logging a countdown every minute and
+    /// updating the window's status line every few seconds.
+    static func sleep(_ seconds: Double, countdown: ((LogLevel, String) -> Void)? = nil,
+                      status: ((String) -> Void)? = nil) async throws {
         var remaining = seconds
+        var sinceLog = 0.0
         while remaining > 0 {
-            let step = min(remaining, 60)
+            status?("Waiting for Groq's free-tier limit: \(describe(remaining)) left…")
+            let step = min(remaining, status == nil ? 60 : 5)
             try await Task.sleep(nanoseconds: UInt64(step * 1_000_000_000))
             remaining -= step
-            if remaining > 0, let countdown {
+            sinceLog += step
+            if remaining > 0, sinceLog >= 60, let countdown {
                 countdown(.info, "…\(describe(remaining)) left")
+                sinceLog = 0
             }
         }
     }

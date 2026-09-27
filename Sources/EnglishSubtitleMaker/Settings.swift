@@ -67,8 +67,6 @@ enum APIKeyStore {
 enum PrefKeys {
     static let model = "groqModel"
     static let dialogueFocus = "dialogueFocus"
-    static let filmLanguage = "filmLanguage"
-    static let textModel = "textModel"
 }
 
 struct PipelineSettings {
@@ -76,17 +74,11 @@ struct PipelineSettings {
     /// On 5.1/7.1 tracks, use only the centre channel, where dialogue is
     /// mixed, to keep music and effects from confusing the recogniser.
     var dialogueFocus: Bool
-    /// Spoken language chosen in the window; nil lets Whisper detect it.
-    var language: FilmLanguage?
-    /// Groq text model for the second step when a language is chosen.
-    var textModel: String
 
     static func current() -> PipelineSettings {
         let d = UserDefaults.standard
         return PipelineSettings(
             model: d.string(forKey: PrefKeys.model) ?? Groq.defaultModel,
-            dialogueFocus: d.object(forKey: PrefKeys.dialogueFocus) as? Bool ?? true,
-            language: FilmLanguage.named(d.string(forKey: PrefKeys.filmLanguage) ?? FilmLanguage.autoCode),
-            textModel: d.string(forKey: PrefKeys.textModel) ?? Groq.defaultTextModel)
+            dialogueFocus: d.object(forKey: PrefKeys.dialogueFocus) as? Bool ?? true)
     }
 }

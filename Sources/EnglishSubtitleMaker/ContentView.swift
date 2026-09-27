@@ -9,16 +9,19 @@ struct ContentView: View {
     @State private var showImporter = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 14) {
+            Header()
             APIKeyBar()
-            FilmLanguageBar()
             dropZone
             if !queue.jobs.isEmpty { jobList }
             progressSection
             LogView()
         }
-        .padding(16)
-        .frame(minWidth: 640, minHeight: 620)
+        .padding(18)
+        .frame(minWidth: 660, minHeight: 640)
+        .background(Theme.background.ignoresSafeArea())
+        .foregroundColor(Theme.text)
+        .preferredColorScheme(.dark)
         .sheet(isPresented: Binding(get: { queue.trackRequest != nil },
                                     set: { if !$0 { queue.answerTrack(nil) } })) {
             if let request = queue.trackRequest {
@@ -33,26 +36,29 @@ struct ContentView: View {
 
     private var dropZone: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(style: StrokeStyle(lineWidth: 2, dash: [8, 6]))
-                .foregroundColor(isTargeted ? .accentColor : .secondary.opacity(0.6))
-                .background(RoundedRectangle(cornerRadius: 12)
-                    .fill(isTargeted ? Color.accentColor.opacity(0.12) : Color.secondary.opacity(0.06)))
-            VStack(spacing: 8) {
-                Image(systemName: "captions.bubble")
-                    .font(.system(size: 34))
-                    .foregroundColor(.secondary)
-                Text("Drop movie files here (.mp4, .mkv, …)")
-                    .font(.headline)
-                Text("English subtitles are saved next to each movie with the same name (\"Movie.srt\"), which VLC loads automatically.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+            RoundedRectangle(cornerRadius: Theme.corner)
+                .fill(isTargeted ? Theme.accent.opacity(0.10) : Theme.surface)
+            RoundedRectangle(cornerRadius: Theme.corner)
+                .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [7, 6]))
+                .foregroundColor(isTargeted ? Theme.accent : Theme.border)
+            VStack(spacing: 10) {
+                Image(systemName: "captions.bubble.fill")
+                    .font(.system(size: 30))
+                    .foregroundColor(Theme.accent)
+                Text("Drop movies here")
+                    .font(.system(size: 16, weight: .semibold))
+                Text("English subtitles are saved next to each movie as \"Movie.srt\", which VLC loads automatically.")
+                    .font(.system(size: 11))
+                    .foregroundColor(Theme.textSecondary)
                     .multilineTextAlignment(.center)
                 Button("Choose Files…") { showImporter = true }
+                    .buttonStyle(.pillProminent)
+                    .padding(.top, 2)
             }
             .padding()
         }
-        .frame(height: 170)
+        .frame(height: 180)
+        .animation(.easeOut(duration: 0.15), value: isTargeted)
         .onDrop(of: [UTType.fileURL], isTargeted: $isTargeted) { providers in
             for provider in providers {
                 provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
@@ -72,46 +78,89 @@ struct ContentView: View {
     }
 
     private var jobList: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text("Files").font(.subheadline.bold())
-                Spacer()
-                Button("Clear Finished") { queue.clearFinished() }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .disabled(!queue.jobs.contains { job in
-                        switch job.status {
-                        case .waiting, .running: return false
-                        default: return true
-                        }
-                    })
-            }
-            ScrollView {
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(queue.jobs) { job in JobRow(job: job) }
+        Card(padding: 12) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    SectionTitle("Files")
+                    Spacer()
+                    Button("Clear Finished") { queue.clearFinished() }
+                        .buttonStyle(.pillSmall)
+                        .disabled(!queue.jobs.contains { job in
+                            switch job.status {
+                            case .waiting, .running: return false
+                            default: return true
+                            }
+                        })
                 }
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(queue.jobs) { job in JobRow(job: job) }
+                    }
+                }
+                .frame(maxHeight: 104)
             }
-            .frame(maxHeight: 110)
         }
     }
 
     private var progressSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text(queue.step)
-                    .font(.callout)
+                    .font(.system(size: 12))
+                    .foregroundColor(Theme.textSecondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer()
                 if queue.isRunning {
                     Text("\(Int(queue.progress * 100))%")
-                        .font(.callout.monospacedDigit())
-                        .foregroundColor(.secondary)
+                        .font(.system(size: 12, weight: .semibold).monospacedDigit())
+                        .foregroundColor(Theme.accent)
                     Button("Cancel") { queue.cancel() }
+                        .buttonStyle(.pillSmall)
                 }
             }
-            ProgressView(value: queue.progress)
+            ProgressBar(value: queue.progress)
         }
+    }
+}
+
+struct Header: View {
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(nsImage: NSApp.applicationIconImage)
+                .resizable()
+                .frame(width: 30, height: 30)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("English Subtitle Maker")
+                    .font(.system(size: 15, weight: .semibold))
+                Text("Whisper large-v3 on Groq")
+                    .font(.system(size: 11))
+                    .foregroundColor(Theme.textFaint)
+            }
+            Spacer()
+            Button {
+                // macOS 13+ renamed the action; try both.
+                if !NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) {
+                    NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
+                }
+            } label: {
+                Image(systemName: "gearshape")
+            }
+            .buttonStyle(.pillSmall)
+            .help("Settings (⌘,)")
+        }
+    }
+}
+
+struct SectionTitle: View {
+    let title: String
+    init(_ title: String) { self.title = title }
+
+    var body: some View {
+        Text(title.uppercased())
+            .font(.system(size: 10, weight: .semibold))
+            .tracking(1.2)
+            .foregroundColor(Theme.textFaint)
     }
 }
 
@@ -122,34 +171,33 @@ struct JobRow: View {
         HStack(spacing: 8) {
             icon.frame(width: 16)
             Text(job.url.lastPathComponent)
+                .font(.system(size: 12))
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer()
-            statusText
+            statusView
         }
-        .font(.callout)
     }
 
     @ViewBuilder private var icon: some View {
         switch job.status {
-        case .waiting: Image(systemName: "clock").foregroundColor(.secondary)
-        case .running: ProgressView().scaleEffect(0.5).frame(width: 16, height: 16)
-        case .done: Image(systemName: "checkmark.circle.fill").foregroundColor(.green)
-        case .failed: Image(systemName: "xmark.octagon.fill").foregroundColor(.red)
-        case .cancelled: Image(systemName: "stop.circle").foregroundColor(.orange)
+        case .waiting: Image(systemName: "clock").foregroundColor(Theme.textFaint)
+        case .running: ProgressView().scaleEffect(0.45).frame(width: 16, height: 16)
+        case .done: Image(systemName: "checkmark.circle.fill").foregroundColor(Theme.success)
+        case .failed: Image(systemName: "xmark.octagon.fill").foregroundColor(Theme.error)
+        case .cancelled: Image(systemName: "stop.circle").foregroundColor(Theme.warning)
         }
     }
 
-    @ViewBuilder private var statusText: some View {
+    @ViewBuilder private var statusView: some View {
         switch job.status {
-        case .waiting: Text("Waiting").foregroundColor(.secondary)
-        case .running: Text("Working…").foregroundColor(.secondary)
+        case .waiting: Text("Waiting").font(.system(size: 11)).foregroundColor(Theme.textFaint)
+        case .running: Text("Working…").font(.system(size: 11)).foregroundColor(Theme.accent)
         case .done(let srt):
             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([srt]) }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-        case .failed(let code): Text("Failed (\(code))").foregroundColor(.red)
-        case .cancelled: Text("Cancelled").foregroundColor(.orange)
+                .buttonStyle(.pillSmall)
+        case .failed(let code): Text("Failed (\(code))").font(.system(size: 11)).foregroundColor(Theme.error)
+        case .cancelled: Text("Cancelled").font(.system(size: 11)).foregroundColor(Theme.warning)
         }
     }
 }
@@ -160,21 +208,35 @@ struct APIKeyBar: View {
     @State private var editing = false
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "key.fill").foregroundColor(.secondary)
-            if queue.apiKey != nil && !editing {
-                Text("Groq API key saved")
-                Text("(…\(String(queue.apiKey?.suffix(4) ?? "")))").foregroundColor(.secondary)
-                Spacer()
-                Button("Change") { editing = true }
-                Button("Remove") { queue.removeKey() }
-            } else {
-                SecureField("Paste your free Groq API key (starts with gsk_)", text: $draft, onCommit: save)
-                    .textFieldStyle(.roundedBorder)
-                Button("Save", action: save)
-                    .disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty)
-                if editing { Button("Cancel") { editing = false; draft = "" } }
-                Link("Get a free key", destination: URL(string: "https://console.groq.com/keys")!)
+        Card(padding: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "key.fill").foregroundColor(Theme.accent)
+                if queue.apiKey != nil && !editing {
+                    Text("Groq API key saved").font(.system(size: 12))
+                    Text("…\(String(queue.apiKey?.suffix(4) ?? ""))")
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundColor(Theme.textFaint)
+                    Spacer()
+                    Button("Change") { editing = true }.buttonStyle(.pillSmall)
+                    Button("Remove") { queue.removeKey() }.buttonStyle(.pillSmall)
+                } else {
+                    SecureField("Paste your free Groq API key (starts with gsk_)", text: $draft, onCommit: save)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 12))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(RoundedRectangle(cornerRadius: 7).fill(Theme.logBackground))
+                        .overlay(RoundedRectangle(cornerRadius: 7).stroke(Theme.border, lineWidth: 1))
+                    Button("Save", action: save)
+                        .buttonStyle(PillButtonStyle(prominent: true, small: true))
+                        .disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty)
+                    if editing {
+                        Button("Cancel") { editing = false; draft = "" }.buttonStyle(.pillSmall)
+                    }
+                    Link("Get a free key", destination: URL(string: "https://console.groq.com/keys")!)
+                        .font(.system(size: 11))
+                        .foregroundColor(Theme.accent)
+                }
             }
         }
     }
@@ -190,29 +252,27 @@ struct LogView: View {
     @EnvironmentObject var queue: JobQueue
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("Log").font(.subheadline.bold())
+                SectionTitle("Log")
                 Spacer()
                 FeedbackButton("Copy Log", done: "Copied") {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(queue.logText(), forType: .string)
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
+                .buttonStyle(.pillSmall)
                 Button("Open Log Folder") {
                     try? FileManager.default.createDirectory(at: AppPaths.logs, withIntermediateDirectories: true)
                     NSWorkspace.shared.open(AppPaths.logs)
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
+                .buttonStyle(.pillSmall)
             }
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 2) {
+                    LazyVStack(alignment: .leading, spacing: 3) {
                         ForEach(queue.log) { line in
-                            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                                Text(queue.formattedTime(line.time)).foregroundColor(.secondary)
+                            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                                Text(queue.formattedTime(line.time)).foregroundColor(Theme.textFaint)
                                 Text(line.text)
                                     .foregroundColor(color(line.level))
                                     .fixedSize(horizontal: false, vertical: true)
@@ -220,13 +280,13 @@ struct LogView: View {
                             .id(line.id)
                         }
                     }
-                    .font(.system(.caption, design: .monospaced))
+                    .font(.system(size: 11, design: .monospaced))
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(8)
+                    .padding(10)
                 }
-                .background(Color(nsColor: .textBackgroundColor))
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.3)))
+                .background(RoundedRectangle(cornerRadius: Theme.corner).fill(Theme.logBackground))
+                .overlay(RoundedRectangle(cornerRadius: Theme.corner).stroke(Theme.border, lineWidth: 1))
                 .onChange(of: queue.log.count) { _ in
                     if let last = queue.log.last { proxy.scrollTo(last.id, anchor: .bottom) }
                 }
@@ -236,11 +296,11 @@ struct LogView: View {
 
     private func color(_ level: LogLevel) -> Color {
         switch level {
-        case .info: return .primary
-        case .detail: return .secondary
-        case .warning: return .orange
-        case .error: return .red
-        case .success: return .green
+        case .info: return Theme.text
+        case .detail: return Theme.textSecondary
+        case .warning: return Theme.warning
+        case .error: return Theme.error
+        case .success: return Theme.success
         }
     }
 }
@@ -249,35 +309,41 @@ struct SettingsView: View {
     @EnvironmentObject var queue: JobQueue
     @AppStorage(PrefKeys.model) private var model = Groq.defaultModel
     @AppStorage(PrefKeys.dialogueFocus) private var dialogueFocus = true
-    @AppStorage(PrefKeys.textModel) private var textModel = Groq.defaultTextModel
 
     var body: some View {
-        Form {
-            Picker("Groq model:", selection: $model) {
-                Text("whisper-large-v3 (best for translation)").tag("whisper-large-v3")
-                Text("whisper-large-v3-turbo (faster, weaker translation)").tag("whisper-large-v3-turbo")
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 6) {
+                SectionTitle("Whisper model")
+                Picker("", selection: $model) {
+                    Text("whisper-large-v3 (best for translation)").tag("whisper-large-v3")
+                    Text("whisper-large-v3-turbo (faster, weaker translation)").tag("whisper-large-v3-turbo")
+                }
+                .labelsHidden()
             }
-            Picker("Translation model:", selection: $textModel) {
-                ForEach(Groq.textModels, id: \.self) { Text($0).tag($0) }
+            VStack(alignment: .leading, spacing: 6) {
+                SectionTitle("Surround audio")
+                Toggle("Dialogue focus: on 5.1/7.1 audio, use only the centre channel", isOn: $dialogueFocus)
+                Text("Surround films put speech in the centre channel. Leaving out music and effects usually improves accuracy.")
+                    .font(.system(size: 11))
+                    .foregroundColor(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            Text("Used when a Film language is chosen: Whisper writes down the dialogue in that language, then this text model translates it. If it is unavailable, the next one in the list is used.")
-                .font(.caption)
-                .foregroundColor(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Toggle("Dialogue focus: on 5.1/7.1 audio, use only the centre channel", isOn: $dialogueFocus)
-            Text("Surround films put speech in the centre channel. Leaving out music and effects usually improves accuracy.")
-                .font(.caption)
-                .foregroundColor(.secondary)
-            Divider()
-            HStack {
-                FeedbackButton("Clear Saved Progress", done: "Cleared") { queue.clearResumeCache() }
-                Text("Unfinished jobs are remembered so they resume where they stopped.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+            VStack(alignment: .leading, spacing: 6) {
+                SectionTitle("Unfinished jobs")
+                HStack(spacing: 10) {
+                    FeedbackButton("Clear Saved Progress", done: "Cleared") { queue.clearResumeCache() }
+                        .buttonStyle(.pillSmall)
+                    Text("Unfinished jobs are remembered so they resume where they stopped.")
+                        .font(.system(size: 11))
+                        .foregroundColor(Theme.textSecondary)
+                }
             }
         }
-        .padding(20)
-        .frame(width: 520)
+        .padding(22)
+        .frame(width: 540)
+        .background(Theme.background)
+        .foregroundColor(Theme.text)
+        .preferredColorScheme(.dark)
     }
 }
 
@@ -310,41 +376,9 @@ struct FeedbackButton: View {
             ZStack {
                 Text(title).opacity(showDone ? 0 : 1)
                 Label(done, systemImage: "checkmark")
-                    .foregroundColor(.green)
+                    .foregroundColor(Theme.success)
                     .opacity(showDone ? 1 : 0)
             }
-        }
-    }
-}
-
-struct FilmLanguageBar: View {
-    @AppStorage(PrefKeys.filmLanguage) private var code = FilmLanguage.autoCode
-
-    private var caption: String {
-        switch code {
-        case FilmLanguage.autoCode: return "Whisper guesses the language and translates in one step."
-        case "en": return "Whisper writes down the English dialogue."
-        default: return "Whisper writes down the dialogue, then a text model translates it."
-        }
-    }
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "globe").foregroundColor(.secondary)
-            Picker("Film language:", selection: $code) {
-                Text("Auto (Whisper guesses)").tag(FilmLanguage.autoCode)
-                Divider()
-                ForEach(FilmLanguage.southAsian) { Text($0.name).tag($0.code) }
-                Divider()
-                ForEach(FilmLanguage.european) { Text($0.name).tag($0.code) }
-                Divider()
-                ForEach(FilmLanguage.other) { Text($0.name).tag($0.code) }
-            }
-            .frame(maxWidth: 300)
-            Text(caption)
-                .font(.caption)
-                .foregroundColor(.secondary)
-            Spacer()
         }
     }
 }
@@ -361,10 +395,10 @@ struct TrackPickerView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Choose the audio track").font(.headline)
+            Text("Choose the audio track").font(.system(size: 15, weight: .semibold))
             Text("\"\(request.fileName)\" has \(request.streams.count) audio tracks. Pick the one in the film's original language (not an English dub).")
-                .font(.callout)
-                .foregroundColor(.secondary)
+                .font(.system(size: 12))
+                .foregroundColor(Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
             Picker("", selection: $selected) {
                 ForEach(request.streams, id: \.audioIndex) { stream in
@@ -376,15 +410,20 @@ struct TrackPickerView: View {
             HStack {
                 Spacer()
                 Button("Cancel Job") { queue.answerTrack(nil) }
+                    .buttonStyle(.pill)
                     .keyboardShortcut(.cancelAction)
                 Button("Use This Track") {
                     queue.answerTrack(request.streams.first { $0.audioIndex == selected })
                 }
+                .buttonStyle(.pillProminent)
                 .keyboardShortcut(.defaultAction)
             }
         }
-        .padding(20)
+        .padding(22)
         .frame(width: 480)
+        .background(Theme.background)
+        .foregroundColor(Theme.text)
+        .preferredColorScheme(.dark)
     }
 
     private func label(_ stream: AudioStream) -> String {

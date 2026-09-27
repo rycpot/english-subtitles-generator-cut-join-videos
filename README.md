@@ -24,12 +24,15 @@ As published by Groq when this was written; they may change:
 
 | Limit | Value | What it means |
 |---|---|---|
-| Audio per hour | 7,200 s (2 h) | About one feature film per hour. If a long film goes over, the app **waits automatically** and continues. |
+| Audio per hour | 7,200 s (2 h) | About one feature film per hour. If a film is longer, the app **waits automatically** (it shows a countdown) until Groq frees up capacity, then continues. |
 | Audio per day | 28,800 s (8 h) | About 3–4 films a day. |
 | File size | 25 MB | The app's parts are under 0.3 MB. |
 | Requests per minute | 20 | The app sends at most one request every 3.1 s to stay under this; it sets the ~15 min per 2-hour film. |
-| Text model (two-step route) | 1,000 requests, 200,000 tokens per day; 8,000 tokens per minute | Only used when a Film language is chosen. About 40 lines per request; short waits for the per-minute limit happen automatically. |
 | Requests per day | 2,000 | About 250 requests per 2-hour film, so the audio limit above is reached first. |
+
+## Long films
+
+A 3-hour film is about 390 parts. The first 2 hours of audio go through at full speed (about 13 minutes). Then Groq's hourly limit (2 hours of audio per hour) kicks in: the app waits, with a countdown in the window, and continues on its own as capacity frees up. **Expect roughly 45–75 minutes in total**, with nothing to do on your side. Two 3-hour films fit in one day's free allowance.
 
 ## Install (first time)
 
@@ -52,10 +55,6 @@ As published by Groq when this was written; they may change:
 
 ## Use
 
-- **Film language** (menu under the key box):
-  - **Auto**: Whisper guesses the language of each 30-second part, hears it and writes English in one step. Works very well for Hindi, European languages and most well-known languages.
-  - **English**: Whisper just writes down the dialogue.
-  - **Any other language** (e.g. Telugu): two steps. Whisper first writes down the dialogue *in that language* (it knows the language, so it doesn't guess). Then a free Groq text model (`openai/gpt-oss-120b` by default; see Settings) translates the lines to English, about 40 lines per request, keeping each line's timing. Whisper's one-step translation often skips sentences in languages like Telugu, so try this when Auto leaves gaps. It takes roughly 30% longer.
 - **Several audio tracks** (e.g. original + English dub): the app asks which one to use, with its best guess (the first track not tagged English) preselected. The log always says which track was used.
 
 - Drag one or more movies (or a folder) onto the window or onto the app's Dock icon. You can also click **Choose Files…**.
@@ -84,12 +83,10 @@ The full log is also written to `~/Library/Logs/EnglishSubtitleMaker/EnglishSubt
 | E203 | Access refused by Groq | Your account or network can't use the model. |
 | E204 | Part too large | Shouldn't happen; please report it with the log. |
 | E205 | Request rejected | See Groq's message in the log. |
-| E206 | Free limit used up | Try again later (the log shows Groq's wait time). Finished parts are kept. |
+| E206 | Daily free limit used up | Groq asked for a wait of more than an hour, which means the daily limit (about 8 hours of audio) is reached. Drop the file again later: finished parts are kept. |
 | E207 | Groq server error | Retried 4 times automatically; try again later. |
 | E208 | Network problem | Retried 4 times automatically; check your connection and drop the file again. |
 | E209 | Unexpected reply | Try again; report it with the log if it repeats. |
-| E210 | Couldn't translate the transcribed lines | The text model kept giving unusable replies. Try again, pick another translation model in Settings, or use Auto. |
-| E211 | No text model available | The translation models in Settings are no longer offered on your account; use Auto and report it. |
 | E301 | Can't save the .srt | The folder is read-only or macOS blocked access. |
 | E302 | No speech found | Check the log to see which audio track was used. |
 | E900 | Cancelled | You stopped the job. Finished parts are kept. |

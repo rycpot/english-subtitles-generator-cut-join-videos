@@ -19,8 +19,6 @@ public enum ErrorCode: String, CaseIterable {
     case serverError = "E207"
     case networkError = "E208"
     case badResponse = "E209"
-    case textTranslationFailed = "E210"
-    case noTextModel = "E211"
     // 3xx: writing the subtitle
     case writeFailed = "E301"
     case noSpeech = "E302"
@@ -44,8 +42,6 @@ public enum ErrorCode: String, CaseIterable {
         case .serverError: return "Groq server error"
         case .networkError: return "Network problem"
         case .badResponse: return "Unexpected reply from Groq"
-        case .textTranslationFailed: return "Could not translate the transcribed lines"
-        case .noTextModel: return "No Groq text model available"
         case .writeFailed: return "Could not save the .srt file"
         case .noSpeech: return "No speech was found"
         case .cancelled: return "Cancelled"
@@ -81,10 +77,6 @@ public enum ErrorCode: String, CaseIterable {
             return "Check your internet connection. Finished parts are remembered, so just drop the file again."
         case .badResponse:
             return "Groq replied with something unexpected. Try again; report it with the log if it repeats."
-        case .textTranslationFailed:
-            return "The text model kept returning unusable replies. Try again, choose another translation model in Settings (⌘,), or set Film language to Auto."
-        case .noTextModel:
-            return "None of the translation models in Settings (⌘,) is available on your Groq account any more. Set Film language to Auto meanwhile, and report this so the list can be updated."
         case .writeFailed:
             return "The folder may be read-only, or macOS blocked access (System Preferences → Security & Privacy → Files and Folders)."
         case .noSpeech:
