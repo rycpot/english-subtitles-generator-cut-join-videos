@@ -1,16 +1,22 @@
 import Foundation
 import SubtitleCore
 
-/// Groq refused the `language` field on a translation request.
-struct LanguageRejected: Error {
+/// A non-retryable HTTP error the caller maps to an error code.
+struct GroqHTTPError: Error {
+    let status: Int
     let message: String
+
+    var isModelUnavailable: Bool {
+        let m = message.lowercased()
+        return status == 404 || (m.contains("model") && (m.contains("not found") || m.contains("does not exist")
+            || m.contains("decommissioned") || m.contains("not available") || m.contains("no access")))
+    }
 }
 
-/// Talks to Groq's OpenAI-compatible audio API, with retries for
-/// rate limits, server hiccups and flaky connections.
+/// Talks to Groq's OpenAI-compatible API, with retries for rate limits,
+/// server hiccups and flaky connections.
 struct GroqClient {
     let apiKey: String
-    let model: String
     let log: (LogLevel, String) -> Void
 
     /// Waits longer than this are treated as "free limit used up for now".
@@ -42,8 +48,22 @@ struct GroqClient {
         }
     }
 
-    /// Uploads one audio part to /audio/translations and returns the raw verbose_json body.
-    func translate(file: URL, mimeType: String, prompt: String?, language: String?) async throws -> Data {
+    // MARK: Audio
+
+    /// One step: Whisper hears the part and writes English. Returns verbose_json.
+    func translateAudio(file: URL, mimeType: String, model: String, prompt: String?) async throws -> Data {
+        try await audioRequest(Groq.translationsURL, file: file, mimeType: mimeType, model: model,
+                               prompt: prompt, language: nil)
+    }
+
+    /// Whisper writes down the words in the given language. Returns verbose_json.
+    func transcribeAudio(file: URL, mimeType: String, model: String, prompt: String?, language: String) async throws -> Data {
+        try await audioRequest(Groq.transcriptionsURL, file: file, mimeType: mimeType, model: model,
+                               prompt: prompt, language: language)
+    }
+
+    private func audioRequest(_ url: URL, file: URL, mimeType: String, model: String,
+                              prompt: String?, language: String?) async throws -> Data {
         let audio: Data
         do {
             audio = try Data(contentsOf: file)
@@ -61,12 +81,67 @@ struct GroqClient {
         if let prompt, !prompt.isEmpty { form.addField("prompt", prompt) }
         if let language { form.addField("language", language) }
         form.addFile("file", filename: file.lastPathComponent, mimeType: mimeType, data: audio)
-        let body = form.finalized()
 
-        var req = URLRequest(url: Groq.translationsURL)
+        var req = URLRequest(url: url)
         req.httpMethod = "POST"
-        req.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         req.setValue(form.contentType, forHTTPHeaderField: "Content-Type")
+        do {
+            return try await send(req, body: form.finalized())
+        } catch let error as GroqHTTPError {
+            if error.status == 413 { throw SubtitleError(.fileTooLarge, error.message) }
+            throw SubtitleError(.badRequest, error.message)
+        }
+    }
+
+    // MARK: Text
+
+    /// Sends a chat completion and returns the reply text.
+    /// Optional parameters Groq rejects for a model (e.g. reasoning settings)
+    /// are dropped and the request is repeated.
+    func chat(model: String, system: String, user: String) async throws -> String {
+        var optional: [String: Any] = [
+            "response_format": ["type": "json_object"],
+            "reasoning_effort": model.contains("gpt-oss") ? "low" : "none",
+            "include_reasoning": false,
+        ]
+        while true {
+            var payload: [String: Any] = [
+                "model": model,
+                "temperature": 0.2,
+                "max_completion_tokens": 4096,
+                "messages": [
+                    ["role": "system", "content": system],
+                    ["role": "user", "content": user],
+                ],
+            ]
+            payload.merge(optional) { a, _ in a }
+            var req = URLRequest(url: Groq.chatURL)
+            req.httpMethod = "POST"
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            let body = try JSONSerialization.data(withJSONObject: payload)
+            do {
+                let data = try await send(req, body: body)
+                guard let reply = try? JSONDecoder().decode(ChatCompletionResponse.self, from: data),
+                      let content = reply.choices.first?.message.content else {
+                    throw SubtitleError(.badResponse, String(decoding: data.prefix(300), as: UTF8.self))
+                }
+                return content
+            } catch let error as GroqHTTPError where error.status == 400 {
+                let message = error.message.lowercased()
+                guard let rejected = optional.keys.first(where: { message.contains($0) }) else { throw error }
+                log(.detail, "\(model) does not support \"\(rejected)\"; retrying without it.")
+                optional.removeValue(forKey: rejected)
+            }
+        }
+    }
+
+    // MARK: Transport
+
+    /// Sends a request, retrying rate limits, server errors and network drops.
+    /// Throws `GroqHTTPError` for other 4xx replies.
+    private func send(_ request: URLRequest, body: Data) async throws -> Data {
+        var req = request
+        req.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
 
         var transientFailures = 0
         var rateLimitWaits = 0
@@ -98,25 +173,22 @@ struct GroqClient {
             switch http.statusCode {
             case 200:
                 return data
-            case 400, 422:
-                if language != nil, message.lowercased().contains("language") {
-                    throw LanguageRejected(message: message)
-                }
-                throw SubtitleError(.badRequest, message)
             case 401:
                 throw SubtitleError(.apiKeyInvalid, message)
             case 403:
                 throw SubtitleError(.apiForbidden, message)
-            case 413:
-                throw SubtitleError(.fileTooLarge, message)
             case 429:
                 let wait = RetryAfter.seconds(header: http.value(forHTTPHeaderField: "retry-after"), message: message) ?? 60
                 rateLimitWaits += 1
                 if wait > Self.maxRateLimitWait || rateLimitWaits > 12 {
                     throw SubtitleError(.rateLimitExhausted, "Groq says: \(message.isEmpty ? "try again in \(Self.describe(wait))" : message)")
                 }
-                log(.warning, "Groq free-tier limit hit. Waiting \(Self.describe(wait)) then continuing automatically…")
+                if wait >= 5 {
+                    log(.warning, "Groq free-tier limit hit. Waiting \(Self.describe(wait)) then continuing automatically…")
+                }
                 try await Self.sleep(wait + 1, countdown: log)
+            case 400..<500:
+                throw GroqHTTPError(status: http.statusCode, message: message)
             default:
                 transientFailures += 1
                 if transientFailures > Self.maxTransientRetries {

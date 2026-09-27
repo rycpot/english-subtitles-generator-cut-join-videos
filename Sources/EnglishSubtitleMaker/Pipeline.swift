@@ -51,6 +51,32 @@ final class Pipeline {
         self.chooseTrack = chooseTrack
     }
 
+    enum Mode {
+        /// Auto: Whisper hears each part and writes English (one request per part).
+        case translateAudio
+        /// English film: Whisper just writes down the dialogue.
+        case transcribeEnglish
+        /// Chosen language: Whisper writes it down, a text model translates it.
+        case transcribeAndTranslate(FilmLanguage)
+
+        var translatesText: Bool {
+            if case .transcribeAndTranslate = self { return true }
+            return false
+        }
+
+        var verb: String {
+            switch self {
+            case .translateAudio: return "Translating"
+            case .transcribeEnglish, .transcribeAndTranslate: return "Transcribing"
+            }
+        }
+    }
+
+    var mode: Mode {
+        guard let language = settings.language else { return .translateAudio }
+        return language.code == "en" ? .transcribeEnglish : .transcribeAndTranslate(language)
+    }
+
     var outputURL: URL {
         input.deletingPathExtension().appendingPathExtension("srt")
     }
@@ -74,17 +100,20 @@ final class Pipeline {
                 log(.info, "Using audio \(track.summary) (first non-English track).")
             }
         }
-        if let language = settings.language {
-            log(.info, "Film language: \(language.name) (sent to Groq instead of letting Whisper guess).")
-        } else {
-            log(.info, "Film language: Auto (Whisper guesses for each part).")
+        switch mode {
+        case .translateAudio:
+            log(.info, "Film language: Auto. Whisper hears each part and writes English directly.")
+        case .transcribeEnglish:
+            log(.info, "Film language: English. Whisper writes down the dialogue.")
+        case .transcribeAndTranslate(let language):
+            log(.info, "Film language: \(language.name). Whisper writes down the \(language.name) dialogue, then a Groq text model translates it to English.")
         }
 
         let workDir = try workFolder(track: track)
         let plan: ChunkPlan
         if let saved = loadPlan(in: workDir) {
             let done = saved.parts.indices.filter { fm.fileExists(atPath: resultURL(workDir, $0).path) }.count
-            log(.info, "Resuming earlier job: \(done) of \(saved.parts.count) parts already translated.")
+            log(.info, "Resuming earlier job: \(done) of \(saved.parts.count) parts already done.")
             plan = saved
         } else {
             plan = try await prepare(workDir: workDir, info: info, track: track)
@@ -92,19 +121,21 @@ final class Pipeline {
         if prepareOnly { return workDir }
 
         guard let apiKey, !apiKey.isEmpty else { throw SubtitleError(.apiKeyMissing) }
-        let client = GroqClient(apiKey: apiKey, model: settings.model, log: log)
+        let client = GroqClient(apiKey: apiKey, log: log)
+        var translator: LineTranslator?
+        if case .transcribeAndTranslate(let language) = mode {
+            translator = LineTranslator(client: client, language: language, preferredModel: settings.textModel,
+                                        workDir: workDir, log: log)
+        }
 
         var results: [ChunkResult] = []
         var previousText: String?
         var lastRequest: Date?
-        var language = settings.language?.code
-        var languageConfirmed = false
         let total = plan.parts.count
         for (i, part) in plan.parts.enumerated() {
             try Task.checkCancellation()
             let label = "Part \(i + 1)/\(total) (\(Self.clock(part.start))–\(Self.clock(part.end)))"
             if part.silent {
-                results.append(ChunkResult(offset: part.start, length: part.end - part.start, segments: []))
                 previousText = nil
                 continue
             }
@@ -115,7 +146,7 @@ final class Pipeline {
             }
             if response == nil {
                 progress(0.30 + 0.68 * Double(i) / Double(total),
-                         "Translating part \(i + 1) of \(total) (\(Self.clock(part.start)))…")
+                         "\(mode.verb) part \(i + 1) of \(total) (\(Self.clock(part.start)))…")
                 if let lastRequest {
                     let wait = Self.minSecondsBetweenRequests - Date().timeIntervalSince(lastRequest)
                     if wait > 0 { try await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000)) }
@@ -123,20 +154,16 @@ final class Pipeline {
                 lastRequest = Date()
                 let file = workDir.appendingPathComponent(part.file)
                 let data: Data
-                do {
-                    data = try await client.translate(file: file, mimeType: plan.mimeType,
-                                                      prompt: previousText, language: language)
-                    if language != nil, !languageConfirmed {
-                        languageConfirmed = true
-                        log(.detail, "Groq accepted the language setting.")
-                    }
-                } catch let rejected as LanguageRejected {
-                    log(.warning, "Groq does not accept a language setting for translation (\(rejected.message)). Continuing with automatic detection.")
-                    language = nil
-                    try await Task.sleep(nanoseconds: UInt64(Self.minSecondsBetweenRequests * 1_000_000_000))
-                    lastRequest = Date()
-                    data = try await client.translate(file: file, mimeType: plan.mimeType,
-                                                      prompt: previousText, language: nil)
+                switch mode {
+                case .translateAudio:
+                    data = try await client.translateAudio(file: file, mimeType: plan.mimeType,
+                                                           model: settings.model, prompt: previousText)
+                case .transcribeEnglish:
+                    data = try await client.transcribeAudio(file: file, mimeType: plan.mimeType, model: settings.model,
+                                                            prompt: previousText, language: "en")
+                case .transcribeAndTranslate(let language):
+                    data = try await client.transcribeAudio(file: file, mimeType: plan.mimeType, model: settings.model,
+                                                            prompt: previousText, language: language.code)
                 }
                 do {
                     response = try JSONDecoder().decode(GroqVerboseResponse.self, from: data)
@@ -147,8 +174,6 @@ final class Pipeline {
                 try? data.write(to: resultFile, options: .atomic)
             }
             let segments = response?.segments ?? []
-            let result = ChunkResult(offset: part.start, length: part.end - part.start, segments: segments)
-            results.append(result)
             let kept = segments.filter { !SubtitleBuilder.isLikelyHallucination($0) }
             log(.detail, "\(label): \(kept.count) line\(kept.count == 1 ? "" : "s")"
                 + (kept.count < segments.count ? " (\(segments.count - kept.count) dropped as noise)" : "")
@@ -156,9 +181,28 @@ final class Pipeline {
             // Give the next part the last lines as context for names and style.
             let tail = kept.suffix(2).map(\.text).joined(separator: " ").trimmingCharacters(in: .whitespaces)
             previousText = tail.isEmpty ? nil : String(tail.suffix(300))
+
+            if let translator {
+                // Times become film times here; translated lines come back with them.
+                translator.add(kept.map { seg in
+                    var s = seg
+                    s.start = part.start + min(max(0, seg.start), part.end - part.start)
+                    s.end = part.start + min(max(0, seg.end), part.end - part.start)
+                    return s
+                })
+                try await translator.translateFullBatches()
+            } else {
+                results.append(ChunkResult(offset: part.start, length: part.end - part.start, segments: segments))
+            }
+        }
+        if let translator {
+            progress(0.98, "Translating the last lines…")
+            try await translator.finish()
+            results = [ChunkResult(offset: 0, length: plan.duration, segments: translator.translated)]
+            log(.info, "Translated \(translator.translated.count) lines to English with \(translator.modelInUse).")
         }
         let silentCount = plan.parts.filter(\.silent).count
-        log(.info, "Translated \(total - silentCount) parts" + (silentCount > 0 ? ", skipped \(silentCount) silent" : "") + ".")
+        log(.info, "Processed \(total - silentCount) parts" + (silentCount > 0 ? ", skipped \(silentCount) silent" : "") + ".")
 
         progress(0.99, "Writing subtitles…")
         let cues = SubtitleBuilder.buildCues(from: results)
@@ -281,8 +325,10 @@ final class Pipeline {
         log(.info, "Split into \(parts.count) part\(parts.count == 1 ? "" : "s") (longest \(Int(longest.rounded(.up))) s)"
             + (silentCount > 0 ? ", \(silentCount) silent." : "."))
         let requests = parts.count - silentCount
-        let minutes = max(1, Int((Double(requests) * Self.minSecondsBetweenRequests / 60).rounded(.up)))
-        log(.info, "Estimated time: about \(minutes) min (\(requests) requests to Groq).")
+        var minutes = Double(requests) * Self.minSecondsBetweenRequests / 60
+        if mode.translatesText { minutes *= 1.3 }
+        log(.info, "Estimated time: about \(max(1, Int(minutes.rounded(.up)))) min (\(requests) audio requests to Groq"
+            + (mode.translatesText ? ", plus text translation)." : ")."))
 
         let plan = ChunkPlan(mimeType: mime, duration: duration, track: track.summary, parts: parts)
         try JSONEncoder().encode(plan).write(to: workDir.appendingPathComponent("plan.json"), options: .atomic)

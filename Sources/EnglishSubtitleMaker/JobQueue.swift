@@ -111,7 +111,7 @@ final class JobQueue: ObservableObject {
                 append(.warning, "Groq keys normally start with \"gsk_\". Double-check you copied the whole key.")
             }
             Task {
-                if let err = await GroqClient(apiKey: trimmed, model: Groq.defaultModel, log: { _, _ in }).verifyKey() {
+                if let err = await GroqClient(apiKey: trimmed, log: { _, _ in }).verifyKey() {
                     append(.error, err.description)
                     append(.detail, "→ \(err.code.hint)")
                 } else {

@@ -2,10 +2,76 @@ import Foundation
 
 public enum Groq {
     public static let translationsURL = URL(string: "https://api.groq.com/openai/v1/audio/translations")!
+    public static let transcriptionsURL = URL(string: "https://api.groq.com/openai/v1/audio/transcriptions")!
+    public static let chatURL = URL(string: "https://api.groq.com/openai/v1/chat/completions")!
     public static let modelsURL = URL(string: "https://api.groq.com/openai/v1/models")!
     /// whisper-large-v3 is the Groq model trained for translation to English
     /// (the faster "turbo" model translates poorly).
     public static let defaultModel = "whisper-large-v3"
+
+    /// Free-tier text models for the two-step route, best first. If the chosen
+    /// one has been withdrawn, the app moves on to the next.
+    public static let textModels = ["openai/gpt-oss-120b", "qwen/qwen3.6-27b", "openai/gpt-oss-20b"]
+    public static let defaultTextModel = "openai/gpt-oss-120b"
+}
+
+/// Reply from /chat/completions (only the parts the app uses).
+public struct ChatCompletionResponse: Decodable {
+    public struct Choice: Decodable {
+        public struct Message: Decodable {
+            public var content: String?
+        }
+        public var message: Message
+    }
+    public var choices: [Choice]
+}
+
+/// Builds the text-model request for a batch of transcribed lines and reads
+/// the reply. Lines are numbered so the reply can be matched back to their
+/// timestamps.
+public enum SubtitleTranslation {
+    /// Lines per request: large enough for context, small enough to stay well
+    /// within the free tier's 8,000 tokens per minute.
+    public static let batchSize = 40
+
+    public static func systemPrompt(language: String) -> String {
+        """
+        You translate film subtitles from \(language) into English. The input is a numbered \
+        list of consecutive lines of dialogue, transcribed automatically, so some words may be \
+        misheard: use the surrounding lines to infer the meaning. Write natural, concise spoken \
+        English suitable for subtitles. Keep names as they are. Translate every line separately: \
+        return exactly one translation per input line, in the same order. If a line is only \
+        noise, music or meaningless, return an empty string for it. Reply with JSON only, in \
+        the form {"t": ["translation of line 1", "translation of line 2", ...]}.
+        """
+    }
+
+    public static func userPrompt(lines: [String], context: [String]) -> String {
+        var out = ""
+        if !context.isEmpty {
+            out += "Earlier dialogue, already translated, for context only (do not include it):\n"
+            out += context.map { "- \($0)" }.joined(separator: "\n") + "\n\n"
+        }
+        out += "Translate these \(lines.count) lines:\n"
+        out += lines.enumerated().map { "\($0.offset + 1). \($0.element)" }.joined(separator: "\n")
+        return out
+    }
+
+    /// Returns the translations, or nil if the reply does not contain exactly
+    /// `expected` of them.
+    public static func parse(_ content: String, expected: Int) -> [String]? {
+        guard let start = content.firstIndex(of: "{"), let end = content.lastIndex(of: "}"), start < end,
+              let object = try? JSONSerialization.jsonObject(with: Data(content[start...end].utf8)) as? [String: Any]
+        else { return nil }
+        let array = (object["t"] ?? object["translations"] ?? object.values.first { $0 is [Any] }) as? [Any]
+        guard let items = array, items.count == expected else { return nil }
+        return items.map { item in
+            let text = (item as? String) ?? ((item as? [String: Any])?.values.first as? String) ?? ""
+            // Some models echo the numbering ("3. Hello"); remove it.
+            return text.replacingOccurrences(of: #"^\s*\d+[.):]\s+"#, with: "", options: .regularExpression)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+    }
 }
 
 /// `response_format=verbose_json` reply from /audio/translations.

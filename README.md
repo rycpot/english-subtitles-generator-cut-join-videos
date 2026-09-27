@@ -28,6 +28,7 @@ As published by Groq when this was written; they may change:
 | Audio per day | 28,800 s (8 h) | About 3–4 films a day. |
 | File size | 25 MB | The app's parts are under 0.3 MB. |
 | Requests per minute | 20 | The app sends at most one request every 3.1 s to stay under this; it sets the ~15 min per 2-hour film. |
+| Text model (two-step route) | 1,000 requests, 200,000 tokens per day; 8,000 tokens per minute | Only used when a Film language is chosen. About 40 lines per request; short waits for the per-minute limit happen automatically. |
 | Requests per day | 2,000 | About 250 requests per 2-hour film, so the audio limit above is reached first. |
 
 ## Install (first time)
@@ -51,7 +52,10 @@ As published by Groq when this was written; they may change:
 
 ## Use
 
-- **Film language** (menu under the key box): choose the language spoken in the film, or leave it on **Auto** to let Whisper guess for each 30-second part. Choosing it helps when Whisper guesses wrong on short parts. If Groq doesn't accept a language setting for translation, the log says so and the app continues with Auto.
+- **Film language** (menu under the key box):
+  - **Auto**: Whisper guesses the language of each 30-second part, hears it and writes English in one step. Works very well for Hindi, European languages and most well-known languages.
+  - **English**: Whisper just writes down the dialogue.
+  - **Any other language** (e.g. Telugu): two steps. Whisper first writes down the dialogue *in that language* (it knows the language, so it doesn't guess). Then a free Groq text model (`openai/gpt-oss-120b` by default; see Settings) translates the lines to English, about 40 lines per request, keeping each line's timing. Whisper's one-step translation often skips sentences in languages like Telugu, so try this when Auto leaves gaps. It takes roughly 30% longer.
 - **Several audio tracks** (e.g. original + English dub): the app asks which one to use, with its best guess (the first track not tagged English) preselected. The log always says which track was used.
 
 - Drag one or more movies (or a folder) onto the window or onto the app's Dock icon. You can also click **Choose Files…**.
@@ -84,6 +88,8 @@ The full log is also written to `~/Library/Logs/EnglishSubtitleMaker/EnglishSubt
 | E207 | Groq server error | Retried 4 times automatically; try again later. |
 | E208 | Network problem | Retried 4 times automatically; check your connection and drop the file again. |
 | E209 | Unexpected reply | Try again; report it with the log if it repeats. |
+| E210 | Couldn't translate the transcribed lines | The text model kept giving unusable replies. Try again, pick another translation model in Settings, or use Auto. |
+| E211 | No text model available | The translation models in Settings are no longer offered on your account; use Auto and report it. |
 | E301 | Can't save the .srt | The folder is read-only or macOS blocked access. |
 | E302 | No speech found | Check the log to see which audio track was used. |
 | E900 | Cancelled | You stopped the job. Finished parts are kept. |

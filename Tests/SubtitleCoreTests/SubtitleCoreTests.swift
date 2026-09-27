@@ -295,3 +295,39 @@ final class FilmLanguageTests: XCTestCase {
         XCTAssertTrue(codes.allSatisfy { $0.count == 2 && $0 == $0.lowercased() })
     }
 }
+
+final class SubtitleTranslationTests: XCTestCase {
+    func testPromptNumbersLinesAndIncludesContext() {
+        let prompt = SubtitleTranslation.userPrompt(lines: ["నమస్కారం", "ఎలా ఉన్నావు?"], context: ["Hello there."])
+        XCTAssertTrue(prompt.contains("- Hello there."))
+        XCTAssertTrue(prompt.contains("Translate these 2 lines:\n1. నమస్కారం\n2. ఎలా ఉన్నావు?"))
+        XCTAssertFalse(SubtitleTranslation.userPrompt(lines: ["a"], context: []).contains("Earlier dialogue"))
+        XCTAssertTrue(SubtitleTranslation.systemPrompt(language: "Telugu").contains("from Telugu into English"))
+    }
+
+    func testParsesJSONReply() {
+        XCTAssertEqual(SubtitleTranslation.parse(#"{"t": ["Hello.", "How are you?"]}"#, expected: 2),
+                       ["Hello.", "How are you?"])
+    }
+
+    func testParsesReplyWrappedInTextAndOtherKeys() {
+        let reply = "Here you go:\n```json\n{\"translations\": [\"1. Hello.\", \"2) Fine\", \"\"]}\n```"
+        XCTAssertEqual(SubtitleTranslation.parse(reply, expected: 3), ["Hello.", "Fine", ""])
+    }
+
+    func testRejectsWrongCountOrGarbage() {
+        XCTAssertNil(SubtitleTranslation.parse(#"{"t": ["only one"]}"#, expected: 2))
+        XCTAssertNil(SubtitleTranslation.parse("sorry, I can't", expected: 1))
+    }
+
+    func testKeepsNumbersThatAreNotListMarkers() {
+        XCTAssertEqual(SubtitleTranslation.parse(#"{"t": ["47 is the house number"]}"#, expected: 1),
+                       ["47 is the house number"])
+    }
+
+    func testDecodesChatReply() throws {
+        let json = #"{"id":"x","choices":[{"index":0,"message":{"role":"assistant","content":"{\"t\":[\"Hi\"]}","reasoning":"..."},"finish_reason":"stop"}],"usage":{"total_tokens":10}}"#
+        let reply = try JSONDecoder().decode(ChatCompletionResponse.self, from: Data(json.utf8))
+        XCTAssertEqual(reply.choices.first?.message.content, #"{"t":["Hi"]}"#)
+    }
+}

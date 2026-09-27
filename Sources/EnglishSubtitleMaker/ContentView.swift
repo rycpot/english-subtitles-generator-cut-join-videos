@@ -249,6 +249,7 @@ struct SettingsView: View {
     @EnvironmentObject var queue: JobQueue
     @AppStorage(PrefKeys.model) private var model = Groq.defaultModel
     @AppStorage(PrefKeys.dialogueFocus) private var dialogueFocus = true
+    @AppStorage(PrefKeys.textModel) private var textModel = Groq.defaultTextModel
 
     var body: some View {
         Form {
@@ -256,6 +257,13 @@ struct SettingsView: View {
                 Text("whisper-large-v3 (best for translation)").tag("whisper-large-v3")
                 Text("whisper-large-v3-turbo (faster, weaker translation)").tag("whisper-large-v3-turbo")
             }
+            Picker("Translation model:", selection: $textModel) {
+                ForEach(Groq.textModels, id: \.self) { Text($0).tag($0) }
+            }
+            Text("Used when a Film language is chosen: Whisper writes down the dialogue in that language, then this text model translates it. If it is unavailable, the next one in the list is used.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             Toggle("Dialogue focus: on 5.1/7.1 audio, use only the centre channel", isOn: $dialogueFocus)
             Text("Surround films put speech in the centre channel. Leaving out music and effects usually improves accuracy.")
                 .font(.caption)
@@ -312,6 +320,14 @@ struct FeedbackButton: View {
 struct FilmLanguageBar: View {
     @AppStorage(PrefKeys.filmLanguage) private var code = FilmLanguage.autoCode
 
+    private var caption: String {
+        switch code {
+        case FilmLanguage.autoCode: return "Whisper guesses the language and translates in one step."
+        case "en": return "Whisper writes down the English dialogue."
+        default: return "Whisper writes down the dialogue, then a text model translates it."
+        }
+    }
+
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "globe").foregroundColor(.secondary)
@@ -325,7 +341,7 @@ struct FilmLanguageBar: View {
                 ForEach(FilmLanguage.other) { Text($0.name).tag($0.code) }
             }
             .frame(maxWidth: 300)
-            Text("Used for files that start after you change it.")
+            Text(caption)
                 .font(.caption)
                 .foregroundColor(.secondary)
             Spacer()
