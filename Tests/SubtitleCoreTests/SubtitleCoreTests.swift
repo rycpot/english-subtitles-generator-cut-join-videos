@@ -1,0 +1,246 @@
+import XCTest
+@testable import SubtitleCore
+
+final class FFmpegParsingTests: XCTestCase {
+    // Real output of `ffmpeg -hide_banner -i test.mkv` (ffmpeg 6.1).
+    let probe = """
+    Input #0, matroska,webm, from 'test.mkv':
+      Metadata:
+        title           : Some Film
+        ENCODER         : Lavf60.16.100
+      Duration: 01:58:03.52, start: -0.021000, bitrate: 381 kb/s
+      Stream #0:0: Video: h264 (Constrained Baseline), yuv420p(progressive), 160x90 [SAR 1:1 DAR 16:9], 5 fps, 5 tbr, 1k tbn
+        Metadata:
+          ENCODER         : Lavc60.31.102 libx264
+      Stream #0:1(hin): Audio: aac (LC), 48000 Hz, 5.1, fltp
+        Metadata:
+          title           : Hindi
+          ENCODER         : Lavc60.31.102 aac
+      Stream #0:2[0x1100](eng): Audio: ac3, 48000 Hz, stereo, fltp, 192 kb/s (default)
+        Metadata:
+          ENCODER         : Lavc60.31.102 aac
+      Stream #0:3(eng): Subtitle: subrip
+    At least one output file must be specified
+    """
+
+    func testParsesDurationAndAudioStreams() {
+        let info = FFmpegOutput.parseMediaInfo(probe)
+        XCTAssertEqual(info.duration!, 7083.52, accuracy: 0.001)
+        XCTAssertEqual(info.audioStreams.count, 2)
+        let hin = info.audioStreams[0]
+        XCTAssertEqual(hin.audioIndex, 0)
+        XCTAssertEqual(hin.language, "hin")
+        XCTAssertEqual(hin.title, "Hindi")
+        XCTAssertEqual(hin.layout, "5.1")
+        XCTAssertTrue(hin.hasCentreChannel)
+        XCTAssertFalse(hin.isDefault)
+        let eng = info.audioStreams[1]
+        XCTAssertEqual(eng.audioIndex, 1)
+        XCTAssertEqual(eng.language, "eng")
+        XCTAssertNil(eng.title, "container title must not leak into streams")
+        XCTAssertEqual(eng.layout, "stereo")
+        XCTAssertTrue(eng.isDefault)
+        XCTAssertFalse(eng.hasCentreChannel)
+    }
+
+    func testPrefersNonEnglishTrack() {
+        let info = FFmpegOutput.parseMediaInfo(probe)
+        XCTAssertEqual(info.preferredAudioStream()?.language, "hin")
+
+        let onlyEnglish = MediaInfo(duration: 10, audioStreams: [
+            AudioStream(audioIndex: 0, language: "eng", title: nil, details: "", isDefault: false, layout: "stereo"),
+            AudioStream(audioIndex: 1, language: "eng", title: nil, details: "", isDefault: true, layout: "stereo"),
+        ])
+        XCTAssertEqual(onlyEnglish.preferredAudioStream()?.audioIndex, 1)
+    }
+
+    func testUndeterminedLanguageIsNil() {
+        let info = FFmpegOutput.parseMediaInfo("  Stream #0:1(und): Audio: aac (LC), 44100 Hz, stereo, fltp (default)")
+        XCTAssertNil(info.audioStreams.first?.language)
+        XCTAssertNil(info.duration)
+    }
+
+    func testSurroundSideLayout() {
+        let info = FFmpegOutput.parseMediaInfo("  Stream #0:1: Audio: eac3, 48000 Hz, 5.1(side), fltp, 640 kb/s")
+        XCTAssertEqual(info.audioStreams.first?.layout, "5.1(side)")
+        XCTAssertEqual(info.audioStreams.first?.hasCentreChannel, true)
+        let six = FFmpegOutput.parseMediaInfo("  Stream #0:1: Audio: pcm_s24le, 48000 Hz, 6 channels, s32")
+        XCTAssertEqual(six.audioStreams.first?.hasCentreChannel, false, "unnamed layouts have no FC to select")
+    }
+
+    func testParsesSilences() {
+        let lines = [
+            "[silencedetect @ 0x5650a5335b40] silence_start: 5.03469",
+            "[silencedetect @ 0x5650a5335b40] silence_end: 7.04 | silence_duration: 2.00531",
+            "size=N/A time=00:00:10.00 bitrate=N/A",
+            "[silencedetect @ 0x5650a5335b40] silence_start: 1496.02",
+        ]
+        let s = FFmpegOutput.parseSilences(lines, totalDuration: 1500)
+        XCTAssertEqual(s, [Silence(start: 5.03469, end: 7.04), Silence(start: 1496.02, end: 1500)])
+    }
+
+    func testProgressLines() {
+        XCTAssertEqual(FFmpegOutput.progressSeconds(fromLine: "out_time_us=1500014750")!, 1500.01475, accuracy: 1e-6)
+        XCTAssertEqual(FFmpegOutput.progressSeconds(fromLine: "out_time_ms=2000000")!, 2.0, accuracy: 1e-9)
+        XCTAssertNil(FFmpegOutput.progressSeconds(fromLine: "out_time_us=N/A"))
+        XCTAssertNil(FFmpegOutput.progressSeconds(fromLine: "progress=end"))
+    }
+
+    func testSegmentList() {
+        let csv = "part_000.mp3,0.000000,596.052000\npart_001.mp3,596.052000,1192.032000\n"
+        let parts = FFmpegOutput.parseSegmentList(csv)
+        XCTAssertEqual(parts.count, 2)
+        XCTAssertEqual(parts[1].file, "part_001.mp3")
+        XCTAssertEqual(parts[1].start, 596.052, accuracy: 1e-9)
+    }
+}
+
+final class ChunkPlannerTests: XCTestCase {
+    func testShortAudioIsOnePart() {
+        XCTAssertEqual(ChunkPlanner.cutPoints(duration: 500, silences: []), [])
+    }
+
+    func testCutsAtLongestPauseInWindow() {
+        let silences = [Silence(start: 450, end: 450.5), Silence(start: 520, end: 523), Silence(start: 590, end: 591)]
+        let cuts = ChunkPlanner.cutPoints(duration: 1000, silences: silences)
+        XCTAssertEqual(cuts, [521.5])
+    }
+
+    func testFallsBackToHardCutWithoutPauses() {
+        XCTAssertEqual(ChunkPlanner.cutPoints(duration: 1500, silences: []), [600, 1200])
+    }
+
+    func testTwoHourFilmPartsStayWithinLimits() {
+        let silences = stride(from: 5.0, to: 7200, by: 7).map { Silence(start: $0, end: $0 + 2) }
+        let cuts = ChunkPlanner.cutPoints(duration: 7200, silences: silences)
+        let bounds = [0.0] + cuts + [7200]
+        for (a, b) in zip(bounds, bounds.dropFirst()) {
+            XCTAssertLessThanOrEqual(b - a, 615)
+            XCTAssertGreaterThan(b - a, 15)
+        }
+        XCTAssertEqual(cuts.count, 12)
+    }
+
+    func testNoTinyTail() {
+        XCTAssertEqual(ChunkPlanner.cutPoints(duration: 610, silences: []), [])
+    }
+}
+
+final class GroqTypesTests: XCTestCase {
+    func testDecodesVerboseJSON() throws {
+        let json = """
+        {"task":"translate","language":"English","duration":12.5,"text":" Hello. Where are you going?",
+         "segments":[{"id":0,"seek":0,"start":0.0,"end":2.5,"text":" Hello.","tokens":[1,2],"temperature":0.0,
+                      "avg_logprob":-0.2,"compression_ratio":1.1,"no_speech_prob":0.01},
+                     {"id":1,"seek":0,"start":2.5,"end":5.0,"text":" Where are you going?"}],
+         "x_groq":{"id":"req_123"}}
+        """
+        let r = try JSONDecoder().decode(GroqVerboseResponse.self, from: Data(json.utf8))
+        XCTAssertEqual(r.segments?.count, 2)
+        XCTAssertEqual(r.segments?[0].noSpeechProb, 0.01)
+        XCTAssertNil(r.segments?[1].avgLogprob)
+    }
+
+    func testErrorMessage() {
+        let body = #"{"error":{"message":"Invalid API Key","type":"invalid_request_error","code":"invalid_api_key"}}"#
+        XCTAssertEqual(GroqErrorEnvelope.message(from: Data(body.utf8)), "Invalid API Key")
+        XCTAssertEqual(GroqErrorEnvelope.message(from: Data("Bad Gateway".utf8)), "Bad Gateway")
+    }
+
+    func testRetryAfter() {
+        XCTAssertEqual(RetryAfter.seconds(header: "17", message: nil), 17)
+        let msg = "Rate limit reached for model `whisper-large-v3` on audio seconds per hour (ASH): Limit 7200, Used 7150, Requested 600. Please try again in 7m32.5s. Visit https://console.groq.com/docs/rate-limits for more information."
+        XCTAssertEqual(RetryAfter.seconds(header: nil, message: msg)!, 452.5, accuracy: 1e-9)
+        XCTAssertEqual(RetryAfter.seconds(header: nil, message: "Please try again in 2h3m4s.")!, 7384, accuracy: 1e-9)
+        XCTAssertEqual(RetryAfter.seconds(header: nil, message: "Please try again in 850ms.")!, 0.85, accuracy: 1e-9)
+        XCTAssertNil(RetryAfter.seconds(header: nil, message: "no hint here"))
+    }
+
+    func testMultipart() {
+        var form = MultipartForm(boundary: "XYZ")
+        form.addField("model", "whisper-large-v3")
+        form.addFile("file", filename: "part_000.mp3", mimeType: "audio/mpeg", data: Data([0x49, 0x44, 0x33]))
+        let body = String(decoding: form.finalized(), as: UTF8.self)
+        XCTAssertEqual(form.contentType, "multipart/form-data; boundary=XYZ")
+        XCTAssertTrue(body.hasPrefix("--XYZ\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nwhisper-large-v3\r\n"))
+        XCTAssertTrue(body.contains("filename=\"part_000.mp3\"\r\nContent-Type: audio/mpeg\r\n\r\nID3\r\n"))
+        XCTAssertTrue(body.hasSuffix("--XYZ--\r\n"))
+    }
+}
+
+final class SubtitleBuilderTests: XCTestCase {
+    func testOffsetsAndFormatting() {
+        let chunks = [
+            ChunkResult(offset: 0, length: 600, segments: [GroqSegment(start: 1, end: 3, text: " Hello there. ")]),
+            ChunkResult(offset: 600, length: 600, segments: [GroqSegment(start: 0.5, end: 2, text: "Where is he?")]),
+        ]
+        let srt = SubtitleBuilder.srt(from: SubtitleBuilder.buildCues(from: chunks))
+        XCTAssertEqual(srt, """
+        1
+        00:00:01,000 --> 00:00:03,000
+        Hello there.
+
+        2
+        00:10:00,500 --> 00:10:02,000
+        Where is he?
+
+
+        """)
+    }
+
+    func testDropsHallucinations() {
+        let segs = [
+            GroqSegment(start: 0, end: 2, text: "Thanks for watching!"),
+            GroqSegment(start: 2, end: 4, text: "Subtitles by the Amara.org community"),
+            GroqSegment(start: 4, end: 6, text: "Hmm", avgLogprob: -1.5, noSpeechProb: 0.9),
+            GroqSegment(start: 6, end: 8, text: "Thank you."),
+        ]
+        let cues = SubtitleBuilder.buildCues(from: [ChunkResult(offset: 0, length: 60, segments: segs)])
+        XCTAssertEqual(cues.map(\.text), ["Thank you."])
+    }
+
+    func testMergesRepeatedLines() {
+        let segs = [
+            GroqSegment(start: 0, end: 2, text: "Run!"),
+            GroqSegment(start: 2.2, end: 3, text: "run"),
+            GroqSegment(start: 10, end: 11, text: "Run!"),
+        ]
+        let cues = SubtitleBuilder.buildCues(from: [ChunkResult(offset: 0, length: 60, segments: segs)])
+        XCTAssertEqual(cues.count, 2)
+        XCTAssertEqual(cues[0].end, 3, accuracy: 1e-9)
+    }
+
+    func testCapsLongDisplayAndFixesOverlap() {
+        let segs = [
+            GroqSegment(start: 0, end: 20, text: "Yes."),
+            GroqSegment(start: 1, end: 3, text: "No."),
+        ]
+        let cues = SubtitleBuilder.buildCues(from: [ChunkResult(offset: 0, length: 60, segments: segs)])
+        XCTAssertLessThanOrEqual(cues[0].end, cues[1].start)
+        let single = SubtitleBuilder.buildCues(from: [ChunkResult(offset: 0, length: 60, segments: [segs[0]])])
+        XCTAssertEqual(single[0].end, 3, accuracy: 1e-9, "a short line is not left up for 20 s")
+    }
+
+    func testSplitsLongTextAndWraps() {
+        let long = "I told you a hundred times that we cannot go back to that village after what happened there last winter, do you understand me?"
+        let cues = SubtitleBuilder.buildCues(from: [ChunkResult(offset: 0, length: 60, segments: [GroqSegment(start: 0, end: 10, text: long)])])
+        XCTAssertGreaterThan(cues.count, 1)
+        for cue in cues {
+            let lines = SubtitleBuilder.wrap(cue.text).components(separatedBy: "\n")
+            XCTAssertLessThanOrEqual(lines.count, 2)
+            for line in lines { XCTAssertLessThanOrEqual(line.count, 50) }
+        }
+        XCTAssertEqual(cues.map(\.text).joined(separator: " "), long)
+    }
+
+    func testClampsSegmentsToChunk() {
+        let cues = SubtitleBuilder.buildCues(from: [ChunkResult(offset: 100, length: 10, segments: [GroqSegment(start: 8, end: 30, text: "Late.")])])
+        XCTAssertEqual(cues[0].start, 108, accuracy: 1e-9)
+        XCTAssertEqual(cues[0].end, 110, accuracy: 1e-9)
+    }
+
+    func testTimestamp() {
+        XCTAssertEqual(SubtitleBuilder.timestamp(3723.4567), "01:02:03,457")
+        XCTAssertEqual(SubtitleBuilder.timestamp(-1), "00:00:00,000")
+    }
+}

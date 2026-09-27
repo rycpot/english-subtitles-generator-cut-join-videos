@@ -1,0 +1,91 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: swift --version
+
+      - name: Unit tests
+        run: swift test
+
+      - name: Rosetta (to run the Intel build on this Apple Silicon runner)
+        run: softwareupdate --install-rosetta --agree-to-license || true
+
+      - name: Download static ffmpeg for Intel Macs (evermeet.cx)
+        run: |
+          curl -fsSL --retry 3 -o ffmpeg.zip "${FFMPEG_URL:-https://evermeet.cx/ffmpeg/getrelease/zip}"
+          unzip -o ffmpeg.zip -d ffmpeg-bin
+          file ffmpeg-bin/ffmpeg
+          arch -x86_64 ffmpeg-bin/ffmpeg -hide_banner -version | head -1
+          arch -x86_64 ffmpeg-bin/ffmpeg -hide_banner -encoders | grep -E "libmp3lame|flac"
+
+      - name: Build app
+        env:
+          ARCH: x86_64
+          FFMPEG_BIN: ffmpeg-bin/ffmpeg
+          VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '1.0.0' }}
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: |
+          VERSION="${VERSION#v}" scripts/build-app.sh
+
+      - name: Self-test the packaged app (probe, extract, find pauses, split)
+        run: |
+          APP="dist/English Subtitle Maker.app"
+          FF="$APP/Contents/Resources/ffmpeg"
+          BIN="$APP/Contents/MacOS/EnglishSubtitleMaker"
+          # 25 min film: Hindi 5.1 track with pauses every 7 s + English stereo dub (default).
+          arch -x86_64 "$FF" -hide_banner -loglevel error -y \
+            -f lavfi -i color=c=black:s=160x90:r=5 \
+            -f lavfi -i "sine=f=440:r=48000:d=1500" -f lavfi -i "sine=f=660:r=48000:d=1500" \
+            -filter_complex "[1]volume='if(lt(mod(t,7),5),1,0)':eval=frame,pan=5.1|c0=0.1*c0|c1=0.1*c0|c2=c0|c3=0*c0|c4=0*c0|c5=0*c0[a1];[2]aformat=channel_layouts=stereo[a2]" \
+            -map 0:v -map "[a1]" -map "[a2]" -t 1500 -c:v mpeg4 -c:a aac \
+            -metadata:s:a:0 language=hin -metadata:s:a:0 title=Hindi -metadata:s:a:1 language=eng \
+            -disposition:a:0 0 -disposition:a:1 default "$RUNNER_TEMP/test film.mkv"
+          # 2 min single-track mp4.
+          arch -x86_64 "$FF" -hide_banner -loglevel error -y \
+            -f lavfi -i color=c=black:s=160x90:r=5 -f lavfi -i "sine=f=300:d=120" \
+            -t 120 -c:v mpeg4 -c:a aac "$RUNNER_TEMP/short.mp4"
+
+          arch -x86_64 "$BIN" --selftest "$RUNNER_TEMP/test film.mkv" | tee mkv.log
+          grep -q "^OK$" mkv.log
+          grep -q "Using audio track 1, hin" mkv.log
+          grep -q "centre (dialogue) channel" mkv.log
+          grep -q "Split into 3 parts" mkv.log
+
+          arch -x86_64 "$BIN" --selftest "$RUNNER_TEMP/short.mp4" | tee mp4.log
+          grep -q "^OK$" mp4.log
+          grep -q "Split into 1 part " mp4.log
+
+          # Unreadable input must fail cleanly with its error code.
+          head -c 1000 /dev/urandom > "$RUNNER_TEMP/junk.mkv"
+          if arch -x86_64 "$BIN" --selftest "$RUNNER_TEMP/junk.mkv" | tee junk.log; then exit 1; fi
+          grep -q "E102" junk.log
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: EnglishSubtitleMaker-macOS
+          path: dist/EnglishSubtitleMaker-macOS.zip
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/EnglishSubtitleMaker-macOS.zip \
+            --title "English Subtitle Maker $GITHUB_REF_NAME" \
+            --notes "Download EnglishSubtitleMaker-macOS.zip, unzip, move the app to Applications, then follow the README's first-run steps."

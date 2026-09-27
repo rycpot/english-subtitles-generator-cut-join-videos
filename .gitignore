@@ -1,0 +1,7 @@
+.build/
+.swiftpm/
+dist/
+ffmpeg-bin/
+ffmpeg.zip
+*.log
+.DS_Store
