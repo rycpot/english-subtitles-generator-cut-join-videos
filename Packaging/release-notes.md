@@ -8,10 +8,15 @@ Turns a foreign-language movie (.mp4, .mkv, …) into English subtitles (`Movie.
 4. Paste your free Groq API key (from https://console.groq.com/keys) into the box at the top, then drop a movie on the window.
 
 **What's in this version**
-- **Film language menu** (under the key box): choose the language spoken in the film instead of letting Whisper guess for each 30-second part. If Groq doesn't accept a language setting for translation, the log says so and the job continues with automatic detection.
-- **Audio track picker:** when a file has several audio tracks (e.g. original + English dub), the app asks which one to use, with its best guess preselected.
-- **Visible click feedback:** "Copy Log" briefly shows a green "✓ Copied", and the small buttons now look pressed when clicked.
+- **Film language now makes a real difference.** Choose the film's language (e.g. Telugu) and the app works in two steps:
+  1. Whisper writes down the dialogue in that language, without guessing.
+  2. A free Groq text model (`openai/gpt-oss-120b` by default) translates the lines to English, keeping each line's timing.
 
-Earlier (v1.0.0): audio is sent to Whisper in parts of 30 seconds or less so subtitles stay in sync; subtitles are saved as `Movie.srt` (an existing one is kept as `Movie.srt.bak`); a 2-hour film takes about 15 minutes on Groq's free tier.
+  Whisper's one-step translation often skips whole sentences in languages like Telugu; this route is meant to fill those gaps. It takes roughly 30% longer.
+- **Auto** works exactly as before (one step), and **English** now just writes down the dialogue.
+- **Translation model** can be changed in Settings (⌘,). If a model is withdrawn from Groq's free tier, the app switches to the next one automatically.
+- New error codes E210 and E211 for the translation step (see the README).
+
+Earlier: audio track picker and click feedback (v1.1.0); parts of 30 seconds or less so subtitles stay in sync, and `Movie.srt` naming (v1.0.0).
 
 See the README for error codes and details.
