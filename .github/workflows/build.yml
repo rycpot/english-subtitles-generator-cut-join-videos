@@ -6,6 +6,11 @@ on:
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
+    inputs:
+      release_version:
+        description: "Publish a release with this version (e.g. 1.0.0). Leave empty to only build."
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -38,7 +43,7 @@ jobs:
         env:
           ARCH: x86_64
           FFMPEG_BIN: ffmpeg-bin/ffmpeg
-          VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '1.0.0' }}
+          VERSION: ${{ inputs.release_version || (startsWith(github.ref, 'refs/tags/v') && github.ref_name) || '1.0.0' }}
           BUILD_NUMBER: ${{ github.run_number }}
         run: |
           VERSION="${VERSION#v}" scripts/build-app.sh
@@ -106,10 +111,15 @@ jobs:
           path: dist/EnglishSubtitleMaker-macOS.zip
 
       - name: Publish release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.release_version != ''
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.release_version }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/EnglishSubtitleMaker-macOS.zip \
-            --title "English Subtitle Maker $GITHUB_REF_NAME" \
-            --notes "Download EnglishSubtitleMaker-macOS.zip, unzip, move the app to Applications, then follow the README's first-run steps."
+          # A manual run creates the tag on GitHub at the built commit.
+          TAG="${RELEASE_VERSION:+v${RELEASE_VERSION#v}}"
+          TAG="${TAG:-$GITHUB_REF_NAME}"
+          gh release create "$TAG" dist/EnglishSubtitleMaker-macOS.zip \
+            --target "$GITHUB_SHA" \
+            --title "English Subtitle Maker $TAG" \
+            --notes-file Packaging/release-notes.md
