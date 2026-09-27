@@ -307,19 +307,10 @@ struct LogView: View {
 
 struct SettingsView: View {
     @EnvironmentObject var queue: JobQueue
-    @AppStorage(PrefKeys.model) private var model = Groq.defaultModel
     @AppStorage(PrefKeys.dialogueFocus) private var dialogueFocus = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 6) {
-                SectionTitle("Whisper model")
-                Picker("", selection: $model) {
-                    Text("whisper-large-v3 (best for translation)").tag("whisper-large-v3")
-                    Text("whisper-large-v3-turbo (faster, weaker translation)").tag("whisper-large-v3-turbo")
-                }
-                .labelsHidden()
-            }
             VStack(alignment: .leading, spacing: 6) {
                 SectionTitle("Surround audio")
                 Toggle("Dialogue focus: on 5.1/7.1 audio, use only the centre channel", isOn: $dialogueFocus)

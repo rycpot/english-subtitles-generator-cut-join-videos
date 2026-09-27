@@ -65,7 +65,6 @@ enum APIKeyStore {
 }
 
 enum PrefKeys {
-    static let model = "groqModel"
     static let dialogueFocus = "dialogueFocus"
 }
 
@@ -78,7 +77,9 @@ struct PipelineSettings {
     static func current() -> PipelineSettings {
         let d = UserDefaults.standard
         return PipelineSettings(
-            model: d.string(forKey: PrefKeys.model) ?? Groq.defaultModel,
+            // Only whisper-large-v3 can translate; an older setting that
+            // chose the turbo model is ignored.
+            model: Groq.defaultModel,
             dialogueFocus: d.object(forKey: PrefKeys.dialogueFocus) as? Bool ?? true)
     }
 }

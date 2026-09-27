@@ -3,8 +3,8 @@ import Foundation
 public enum Groq {
     public static let translationsURL = URL(string: "https://api.groq.com/openai/v1/audio/translations")!
     public static let modelsURL = URL(string: "https://api.groq.com/openai/v1/models")!
-    /// whisper-large-v3 is the Groq model trained for translation to English
-    /// (the faster "turbo" model translates poorly).
+    /// whisper-large-v3 is the only Groq Whisper model that translates to
+    /// English; "turbo" rejects translation requests.
     public static let defaultModel = "whisper-large-v3"
 }
 
