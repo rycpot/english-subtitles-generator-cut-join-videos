@@ -9,6 +9,14 @@ struct LogLine: Identifiable {
     let text: String
 }
 
+/// Shown as a sheet when a file has several audio tracks.
+struct TrackRequest: Identifiable {
+    let id = UUID()
+    let fileName: String
+    let streams: [AudioStream]
+    let suggested: AudioStream
+}
+
 struct Job: Identifiable {
     enum Status: Equatable {
         case waiting
@@ -33,6 +41,8 @@ final class JobQueue: ObservableObject {
     @Published var step: String = "Drop a video file to start."
     @Published private(set) var isRunning = false
     @Published var apiKey: String? = APIKeyStore.load()
+    @Published private(set) var trackRequest: TrackRequest?
+    private var trackContinuation: CheckedContinuation<AudioStream?, Never>?
 
     static let videoExtensions: Set<String> = [
         "mp4", "mkv", "m4v", "mov", "avi", "webm", "wmv", "flv", "ts", "m2ts", "mts",
@@ -135,6 +145,25 @@ final class JobQueue: ObservableObject {
 
     func cancel() {
         worker?.cancel()
+        answerTrack(nil)
+    }
+
+    // MARK: Audio track choice
+
+    func askForTrack(file: String, streams: [AudioStream], suggested: AudioStream) async -> AudioStream? {
+        step = "Waiting for you to choose an audio track…"
+        return await withCheckedContinuation { continuation in
+            trackContinuation = continuation
+            trackRequest = TrackRequest(fileName: file, streams: streams, suggested: suggested)
+        }
+    }
+
+    /// nil cancels the job.
+    func answerTrack(_ stream: AudioStream?) {
+        trackRequest = nil
+        let continuation = trackContinuation
+        trackContinuation = nil
+        continuation?.resume(returning: stream)
     }
 
     private func runQueue() async {
@@ -166,7 +195,10 @@ final class JobQueue: ObservableObject {
         let pipeline = Pipeline(
             input: url, ffmpeg: ffmpeg, settings: .current(), apiKey: apiKey,
             log: { level, text in Task { @MainActor in JobQueue.shared.append(level, text) } },
-            progress: { value, step in Task { @MainActor in JobQueue.shared.setProgress(value, step) } })
+            progress: { value, step in Task { @MainActor in JobQueue.shared.setProgress(value, step) } },
+            chooseTrack: { streams, suggested in
+                await JobQueue.shared.askForTrack(file: url.lastPathComponent, streams: streams, suggested: suggested)
+            })
         do {
             let srt = try await pipeline.run()
             progress = 1

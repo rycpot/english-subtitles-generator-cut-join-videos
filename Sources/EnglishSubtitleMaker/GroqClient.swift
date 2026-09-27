@@ -1,6 +1,11 @@
 import Foundation
 import SubtitleCore
 
+/// Groq refused the `language` field on a translation request.
+struct LanguageRejected: Error {
+    let message: String
+}
+
 /// Talks to Groq's OpenAI-compatible audio API, with retries for
 /// rate limits, server hiccups and flaky connections.
 struct GroqClient {
@@ -38,7 +43,7 @@ struct GroqClient {
     }
 
     /// Uploads one audio part to /audio/translations and returns the raw verbose_json body.
-    func translate(file: URL, mimeType: String, prompt: String?) async throws -> Data {
+    func translate(file: URL, mimeType: String, prompt: String?, language: String?) async throws -> Data {
         let audio: Data
         do {
             audio = try Data(contentsOf: file)
@@ -54,6 +59,7 @@ struct GroqClient {
         form.addField("response_format", "verbose_json")
         form.addField("temperature", "0")
         if let prompt, !prompt.isEmpty { form.addField("prompt", prompt) }
+        if let language { form.addField("language", language) }
         form.addFile("file", filename: file.lastPathComponent, mimeType: mimeType, data: audio)
         let body = form.finalized()
 
@@ -93,6 +99,9 @@ struct GroqClient {
             case 200:
                 return data
             case 400, 422:
+                if language != nil, message.lowercased().contains("language") {
+                    throw LanguageRejected(message: message)
+                }
                 throw SubtitleError(.badRequest, message)
             case 401:
                 throw SubtitleError(.apiKeyInvalid, message)

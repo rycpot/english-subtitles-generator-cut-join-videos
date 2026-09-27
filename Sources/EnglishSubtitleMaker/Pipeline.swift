@@ -34,16 +34,21 @@ final class Pipeline {
     let apiKey: String?
     let log: (LogLevel, String) -> Void
     let progress: (Double, String) -> Void
+    /// Asks the user which audio track to use when there are several.
+    /// Gets all tracks and the suggested one; returns nil to cancel.
+    let chooseTrack: (([AudioStream], AudioStream) async -> AudioStream?)?
 
     init(input: URL, ffmpeg: URL, settings: PipelineSettings, apiKey: String?,
          log: @escaping (LogLevel, String) -> Void,
-         progress: @escaping (Double, String) -> Void) {
+         progress: @escaping (Double, String) -> Void,
+         chooseTrack: (([AudioStream], AudioStream) async -> AudioStream?)? = nil) {
         self.input = input
         self.ffmpeg = ffmpeg
         self.settings = settings
         self.apiKey = apiKey
         self.log = log
         self.progress = progress
+        self.chooseTrack = chooseTrack
     }
 
     var outputURL: URL {
@@ -58,14 +63,31 @@ final class Pipeline {
         guard fm.isReadableFile(atPath: input.path) else {
             throw SubtitleError(.inputUnreadable, input.path)
         }
-        let workDir = try workFolder()
+        let info = try await probe()
+        guard var track = info.preferredAudioStream() else { throw SubtitleError(.noAudioTrack) }
+        if info.audioStreams.count > 1 {
+            if let chooseTrack {
+                guard let picked = await chooseTrack(info.audioStreams, track) else { throw CancellationError() }
+                log(.info, "Using audio \(picked.summary)" + (picked == track ? "." : " (your choice)."))
+                track = picked
+            } else {
+                log(.info, "Using audio \(track.summary) (first non-English track).")
+            }
+        }
+        if let language = settings.language {
+            log(.info, "Film language: \(language.name) (sent to Groq instead of letting Whisper guess).")
+        } else {
+            log(.info, "Film language: Auto (Whisper guesses for each part).")
+        }
+
+        let workDir = try workFolder(track: track)
         let plan: ChunkPlan
         if let saved = loadPlan(in: workDir) {
             let done = saved.parts.indices.filter { fm.fileExists(atPath: resultURL(workDir, $0).path) }.count
             log(.info, "Resuming earlier job: \(done) of \(saved.parts.count) parts already translated.")
             plan = saved
         } else {
-            plan = try await prepare(workDir: workDir)
+            plan = try await prepare(workDir: workDir, info: info, track: track)
         }
         if prepareOnly { return workDir }
 
@@ -75,7 +97,8 @@ final class Pipeline {
         var results: [ChunkResult] = []
         var previousText: String?
         var lastRequest: Date?
-        var uploaded = 0
+        var language = settings.language?.code
+        var languageConfirmed = false
         let total = plan.parts.count
         for (i, part) in plan.parts.enumerated() {
             try Task.checkCancellation()
@@ -98,8 +121,23 @@ final class Pipeline {
                     if wait > 0 { try await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000)) }
                 }
                 lastRequest = Date()
-                let data = try await client.translate(file: workDir.appendingPathComponent(part.file),
-                                                      mimeType: plan.mimeType, prompt: previousText)
+                let file = workDir.appendingPathComponent(part.file)
+                let data: Data
+                do {
+                    data = try await client.translate(file: file, mimeType: plan.mimeType,
+                                                      prompt: previousText, language: language)
+                    if language != nil, !languageConfirmed {
+                        languageConfirmed = true
+                        log(.detail, "Groq accepted the language setting.")
+                    }
+                } catch let rejected as LanguageRejected {
+                    log(.warning, "Groq does not accept a language setting for translation (\(rejected.message)). Continuing with automatic detection.")
+                    language = nil
+                    try await Task.sleep(nanoseconds: UInt64(Self.minSecondsBetweenRequests * 1_000_000_000))
+                    lastRequest = Date()
+                    data = try await client.translate(file: file, mimeType: plan.mimeType,
+                                                      prompt: previousText, language: nil)
+                }
                 do {
                     response = try JSONDecoder().decode(GroqVerboseResponse.self, from: data)
                 } catch {
@@ -107,7 +145,6 @@ final class Pipeline {
                     throw SubtitleError(.badResponse, snippet)
                 }
                 try? data.write(to: resultFile, options: .atomic)
-                uploaded += 1
             }
             let segments = response?.segments ?? []
             let result = ChunkResult(offset: part.start, length: part.end - part.start, segments: segments)
@@ -145,10 +182,8 @@ final class Pipeline {
 
     // MARK: - Preparation
 
-    private func prepare(workDir: URL) async throws -> ChunkPlan {
-        let fm = FileManager.default
-
-        // 1. Probe
+    /// Reads the file's length and audio tracks.
+    private func probe() async throws -> MediaInfo {
         progress(0.01, "Reading file…")
         let probe = try await runFFmpeg(["-hide_banner", "-nostdin", "-i", input.path])
         let info = FFmpegOutput.parseMediaInfo(probe.stderrLines.joined(separator: "\n"))
@@ -161,10 +196,11 @@ final class Pipeline {
         }
         if let d = info.duration { log(.info, "Length: \(Self.clock(d)).") }
         for s in info.audioStreams { log(.detail, "Audio \(s.summary)") }
-        guard let track = info.preferredAudioStream() else { throw SubtitleError(.noAudioTrack) }
-        if info.audioStreams.count > 1 {
-            log(.info, "Using audio \(track.summary) (first non-English track).")
-        }
+        return info
+    }
+
+    private func prepare(workDir: URL, info: MediaInfo, track: AudioStream) async throws -> ChunkPlan {
+        let fm = FileManager.default
 
         // 2. Extract mono 16 kHz audio (what Whisper uses internally).
         let encoders = try await runFFmpeg(["-hide_banner", "-encoders"], captureStdout: true)
@@ -287,11 +323,11 @@ final class Pipeline {
         return FFmpegRun(status: result.status, stderrLines: result.stderrLines, stdout: stdoutBox.value)
     }
 
-    private func workFolder() throws -> URL {
+    private func workFolder(track: AudioStream) throws -> URL {
         let attrs = (try? FileManager.default.attributesOfItem(atPath: input.path)) ?? [:]
         let size = (attrs[.size] as? NSNumber)?.int64Value ?? 0
         let mtime = (attrs[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
-        let identity = "\(input.path)|\(size)|\(mtime)|\(settings.model)|\(settings.dialogueFocus)|v2"
+        let identity = "\(input.path)|\(size)|\(mtime)|\(settings.model)|\(settings.dialogueFocus)|\(settings.language?.code ?? "auto")|track\(track.audioIndex)|v2"
         let hash = SHA256.hash(data: Data(identity.utf8)).map { String(format: "%02x", $0) }.joined().prefix(16)
         let dir = AppPaths.cache.appendingPathComponent(String(hash), isDirectory: true)
         do {

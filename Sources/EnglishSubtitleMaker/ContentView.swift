@@ -11,6 +11,7 @@ struct ContentView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             APIKeyBar()
+            FilmLanguageBar()
             dropZone
             if !queue.jobs.isEmpty { jobList }
             progressSection
@@ -18,6 +19,12 @@ struct ContentView: View {
         }
         .padding(16)
         .frame(minWidth: 640, minHeight: 620)
+        .sheet(isPresented: Binding(get: { queue.trackRequest != nil },
+                                    set: { if !$0 { queue.answerTrack(nil) } })) {
+            if let request = queue.trackRequest {
+                TrackPickerView(request: request).environmentObject(queue)
+            }
+        }
         .fileImporter(isPresented: $showImporter, allowedContentTypes: [.movie, .audio],
                       allowsMultipleSelection: true) { result in
             if case .success(let urls) = result { queue.add(urls) }
@@ -69,8 +76,9 @@ struct ContentView: View {
             HStack {
                 Text("Files").font(.subheadline.bold())
                 Spacer()
-                Button("Clear finished") { queue.clearFinished() }
-                    .buttonStyle(.link)
+                Button("Clear Finished") { queue.clearFinished() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
                     .disabled(!queue.jobs.contains { job in
                         switch job.status {
                         case .waiting, .running: return false
@@ -138,7 +146,8 @@ struct JobRow: View {
         case .running: Text("Working…").foregroundColor(.secondary)
         case .done(let srt):
             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([srt]) }
-                .buttonStyle(.link)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
         case .failed(let code): Text("Failed (\(code))").foregroundColor(.red)
         case .cancelled: Text("Cancelled").foregroundColor(.orange)
         }
@@ -185,16 +194,18 @@ struct LogView: View {
             HStack {
                 Text("Log").font(.subheadline.bold())
                 Spacer()
-                Button("Copy Log") {
+                FeedbackButton("Copy Log", done: "Copied") {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(queue.logText(), forType: .string)
                 }
-                .buttonStyle(.link)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
                 Button("Open Log Folder") {
                     try? FileManager.default.createDirectory(at: AppPaths.logs, withIntermediateDirectories: true)
                     NSWorkspace.shared.open(AppPaths.logs)
                 }
-                .buttonStyle(.link)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
             }
             ScrollViewReader { proxy in
                 ScrollView {
@@ -251,7 +262,7 @@ struct SettingsView: View {
                 .foregroundColor(.secondary)
             Divider()
             HStack {
-                Button("Clear Saved Progress") { queue.clearResumeCache() }
+                FeedbackButton("Clear Saved Progress", done: "Cleared") { queue.clearResumeCache() }
                 Text("Unfinished jobs are remembered so they resume where they stopped.")
                     .font(.caption)
                     .foregroundColor(.secondary)
@@ -259,5 +270,109 @@ struct SettingsView: View {
         }
         .padding(20)
         .frame(width: 520)
+    }
+}
+
+/// A button that briefly shows a checkmark and `done` after it is clicked,
+/// so actions with no other visible result (like copying) are confirmed.
+struct FeedbackButton: View {
+    let title: String
+    let done: String
+    let action: () -> Void
+    @State private var showDone = false
+    @State private var clicks = 0
+
+    init(_ title: String, done: String, action: @escaping () -> Void) {
+        self.title = title
+        self.done = done
+        self.action = action
+    }
+
+    var body: some View {
+        Button {
+            action()
+            clicks += 1
+            let click = clicks
+            withAnimation(.easeOut(duration: 0.15)) { showDone = true }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                if clicks == click { withAnimation(.easeIn(duration: 0.2)) { showDone = false } }
+            }
+        } label: {
+            // Both labels are laid out so the button keeps its width.
+            ZStack {
+                Text(title).opacity(showDone ? 0 : 1)
+                Label(done, systemImage: "checkmark")
+                    .foregroundColor(.green)
+                    .opacity(showDone ? 1 : 0)
+            }
+        }
+    }
+}
+
+struct FilmLanguageBar: View {
+    @AppStorage(PrefKeys.filmLanguage) private var code = FilmLanguage.autoCode
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "globe").foregroundColor(.secondary)
+            Picker("Film language:", selection: $code) {
+                Text("Auto (Whisper guesses)").tag(FilmLanguage.autoCode)
+                Divider()
+                ForEach(FilmLanguage.southAsian) { Text($0.name).tag($0.code) }
+                Divider()
+                ForEach(FilmLanguage.european) { Text($0.name).tag($0.code) }
+                Divider()
+                ForEach(FilmLanguage.other) { Text($0.name).tag($0.code) }
+            }
+            .frame(maxWidth: 300)
+            Text("Used for files that start after you change it.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            Spacer()
+        }
+    }
+}
+
+struct TrackPickerView: View {
+    @EnvironmentObject var queue: JobQueue
+    let request: TrackRequest
+    @State private var selected: Int
+
+    init(request: TrackRequest) {
+        self.request = request
+        _selected = State(initialValue: request.suggested.audioIndex)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Choose the audio track").font(.headline)
+            Text("\"\(request.fileName)\" has \(request.streams.count) audio tracks. Pick the one in the film's original language (not an English dub).")
+                .font(.callout)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Picker("", selection: $selected) {
+                ForEach(request.streams, id: \.audioIndex) { stream in
+                    Text(label(stream)).tag(stream.audioIndex)
+                }
+            }
+            .pickerStyle(.radioGroup)
+            .labelsHidden()
+            HStack {
+                Spacer()
+                Button("Cancel Job") { queue.answerTrack(nil) }
+                    .keyboardShortcut(.cancelAction)
+                Button("Use This Track") {
+                    queue.answerTrack(request.streams.first { $0.audioIndex == selected })
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 480)
+    }
+
+    private func label(_ stream: AudioStream) -> String {
+        let summary = stream.summary.prefix(1).uppercased() + stream.summary.dropFirst()
+        return stream == request.suggested ? "\(summary)  (suggested)" : summary
     }
 }

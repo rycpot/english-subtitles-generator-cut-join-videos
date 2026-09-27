@@ -282,3 +282,16 @@ final class SubtitleBuilderTests: XCTestCase {
         XCTAssertEqual(SubtitleBuilder.timestamp(-1), "00:00:00,000")
     }
 }
+
+final class FilmLanguageTests: XCTestCase {
+    func testLookup() {
+        XCTAssertEqual(FilmLanguage.named("te")?.name, "Telugu")
+        XCTAssertNil(FilmLanguage.named(FilmLanguage.autoCode))
+    }
+
+    func testCodesAreUniqueTwoLetterCodes() {
+        let codes = FilmLanguage.all.map(\.code)
+        XCTAssertEqual(Set(codes).count, codes.count)
+        XCTAssertTrue(codes.allSatisfy { $0.count == 2 && $0 == $0.lowercased() })
+    }
+}

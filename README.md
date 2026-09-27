@@ -51,6 +51,9 @@ As published by Groq when this was written; they may change:
 
 ## Use
 
+- **Film language** (menu under the key box): choose the language spoken in the film, or leave it on **Auto** to let Whisper guess for each 30-second part. Choosing it helps when Whisper guesses wrong on short parts. If Groq doesn't accept a language setting for translation, the log says so and the app continues with Auto.
+- **Several audio tracks** (e.g. original + English dub): the app asks which one to use, with its best guess (the first track not tagged English) preselected. The log always says which track was used.
+
 - Drag one or more movies (or a folder) onto the window or onto the app's Dock icon. You can also click **Choose Files…**.
 - Watch the progress bar and log. When the job finishes, `Movie.srt` sits next to `Movie.mkv`. The log lists each part's English lines, so you can see where Whisper returned nothing.
 - Open the movie in VLC and the subtitles appear. If they don't, use **Subtitle → Add Subtitle File…** in VLC.
