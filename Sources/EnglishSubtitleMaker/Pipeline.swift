@@ -145,7 +145,7 @@ final class Pipeline {
         let codecArgs = useMP3 ? ["-c:a", "libmp3lame", "-b:a", "64k"] : ["-c:a", "flac", "-sample_fmt", "s16"]
         let full = workDir.appendingPathComponent("full.\(ext)")
 
-        func extract(centreOnly: Bool) async throws -> ProcessResult {
+        func extract(centreOnly: Bool) async throws -> FFmpegRun {
             var args = ["-hide_banner", "-nostdin", "-y", "-i", input.path,
                         "-map", "0:a:\(track.audioIndex)", "-vn", "-sn", "-dn"]
             if centreOnly { args += ["-af", "pan=mono|c0=FC"] }
