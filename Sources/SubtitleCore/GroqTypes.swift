@@ -40,9 +40,11 @@ public enum SubtitleTranslation {
         list of consecutive lines of dialogue, transcribed automatically, so some words may be \
         misheard: use the surrounding lines to infer the meaning. Write natural, concise spoken \
         English suitable for subtitles. Keep names as they are. Translate every line separately: \
-        return exactly one translation per input line, in the same order. If a line is only \
-        noise, music or meaningless, return an empty string for it. Reply with JSON only, in \
-        the form {"t": ["translation of line 1", "translation of line 2", ...]}.
+        return exactly one translation per input line, in the same order. Even when a line is \
+        garbled, give your best guess at its meaning; return an empty string only for a line \
+        that is clearly just a sound such as music or humming. Reply with JSON only, in the \
+        form {"t": ["translation of line 1", "translation of line 2", ...]}, where each \
+        element is a plain string containing only the English translation.
         """
     }
 
@@ -66,11 +68,24 @@ public enum SubtitleTranslation {
         let array = (object["t"] ?? object["translations"] ?? object.values.first { $0 is [Any] }) as? [Any]
         guard let items = array, items.count == expected else { return nil }
         return items.map { item in
-            let text = (item as? String) ?? ((item as? [String: Any])?.values.first as? String) ?? ""
             // Some models echo the numbering ("3. Hello"); remove it.
-            return text.replacingOccurrences(of: #"^\s*\d+[.):]\s+"#, with: "", options: .regularExpression)
+            text(of: item).replacingOccurrences(of: #"^\s*\d+[.):]\s+"#, with: "", options: .regularExpression)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
         }
+    }
+
+    /// A reply entry is normally a string, but some models send objects such as
+    /// {"line": 1, "translation": "..."}: take the translation from those.
+    static func text(of item: Any) -> String {
+        if let s = item as? String { return s }
+        guard let object = item as? [String: Any] else { return "" }
+        for key in ["translation", "english", "en", "text", "t", "output"] {
+            if let s = object[key] as? String { return s }
+        }
+        let original = ["original", "source", "input", "telugu", "line"]
+        return object.filter { !original.contains($0.key.lowercased()) }
+            .compactMap { $0.value as? String }
+            .max { $0.count < $1.count } ?? ""
     }
 }
 

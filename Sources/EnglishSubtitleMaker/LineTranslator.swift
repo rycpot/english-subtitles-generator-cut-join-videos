@@ -56,12 +56,13 @@ final class LineTranslator {
 
     private func translateBatch(_ segments: [GroqSegment]) async throws {
         let lines = segments.map { SubtitleBuilder.cleaned($0.text) }
-        let file = workDir.appendingPathComponent(String(format: "text_%04d.json", batchIndex))
+        let file = workDir.appendingPathComponent(String(format: "text2_%04d.json", batchIndex))
         batchIndex += 1
 
         var output: [String]?
         if let data = try? Data(contentsOf: file),
-           let saved = try? JSONDecoder().decode(SavedBatch.self, from: data), saved.input == lines {
+           let saved = try? JSONDecoder().decode(SavedBatch.self, from: data), saved.input == lines,
+           saved.output.contains(where: { !$0.isEmpty }) {
             output = saved.output
         }
         if output == nil {
@@ -88,12 +89,22 @@ final class LineTranslator {
         let system = SubtitleTranslation.systemPrompt(language: language.name)
         let user = SubtitleTranslation.userPrompt(lines: lines, context: context)
         var lastReply = ""
+        var allEmpty: [String]?
         for attempt in 1...2 {
             lastReply = try await chat(system: system, user: user)
-            if let result = SubtitleTranslation.parse(lastReply, expected: lines.count) { return result }
+            if let result = SubtitleTranslation.parse(lastReply, expected: lines.count) {
+                if result.contains(where: { !$0.isEmpty }) || lines.count == 1 { return result }
+                // Every line came back empty: most likely a reply in a shape we
+                // could not read. Show it, and ask once more.
+                allEmpty = result
+                log(.warning, "The translation came back empty for all \(lines.count) lines"
+                    + (attempt == 1 ? "; asking again." : ".") + " Reply began: \(Self.snippet(lastReply))")
+                continue
+            }
             log(.detail, "The translation reply did not match the \(lines.count) lines"
-                + (attempt == 1 ? "; asking again." : "."))
+                + (attempt == 1 ? "; asking again." : ".") + " Reply began: \(Self.snippet(lastReply))")
         }
+        if let allEmpty { return allEmpty }
         guard lines.count > 1 else {
             throw SubtitleError(.textTranslationFailed, "reply was: \(lastReply.prefix(200))")
         }
@@ -101,6 +112,11 @@ final class LineTranslator {
         let first = try await translate(Array(lines[..<half]), context: context)
         let second = try await translate(Array(lines[half...]), context: first.suffix(3).filter { !$0.isEmpty })
         return first + second
+    }
+
+    static func snippet(_ reply: String) -> String {
+        let flat = reply.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.joined(separator: " ")
+        return flat.count > 200 ? String(flat.prefix(200)) + "…" : flat
     }
 
     /// Sends to the first model that is still available.

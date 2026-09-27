@@ -331,3 +331,15 @@ final class SubtitleTranslationTests: XCTestCase {
         XCTAssertEqual(reply.choices.first?.message.content, #"{"t":["Hi"]}"#)
     }
 }
+
+final class SubtitleTranslationShapeTests: XCTestCase {
+    func testReadsObjectEntries() {
+        let reply = #"{"t": [{"line": 1, "translation": "Money and soap are alike."}, {"original": "ఏవుటో", "english": "What is it?"}]}"#
+        XCTAssertEqual(SubtitleTranslation.parse(reply, expected: 2), ["Money and soap are alike.", "What is it?"])
+    }
+
+    func testReadsUnknownObjectKeysButNotTheOriginal() {
+        let reply = #"{"t": [{"telugu": "ఇది హాస్ నమ్మర్ 47", "meaning": "This is house number 47"}]}"#
+        XCTAssertEqual(SubtitleTranslation.parse(reply, expected: 1), ["This is house number 47"])
+    }
+}
