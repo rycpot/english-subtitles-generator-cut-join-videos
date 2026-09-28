@@ -8,9 +8,10 @@ Three tools for movies on your Mac: English subtitles for foreign-language films
 4. Paste your free Groq API key (from https://console.groq.com/keys) into the box at the top, then drop a movie on the window.
 
 **What's in this version**
-- **Separate logs:** the Subtitles, Cutter and Joiner tabs each have their own log (and log file), so switching tabs shows only that tool's messages.
-- **Clear Log** button next to Copy Log.
+- **Faster, lossless cuts of films and trailers:** many are encoded with "open GOP", which made the Cutter's quick cut fail its join check (e.g. `reference count 1 overflow`) and redo the whole range with full re-encoding. Those files now use the quick cut: the middle is copied untouched and only a few frames at each end are re-encoded.
+- The join check no longer mistakes the source's own open-GOP decoding messages for a bad join.
+- The app now includes the FFmpeg licence notice (`THIRD_PARTY_NOTICES.md`).
 
-Earlier: new name (v1.5.1); Cutter and Joiner tabs, smart cut, cleaner subtitles (v1.5.0); charcoal and green theme (v1.4.0); whisper-large-v3 only (v1.3.1); long films wait out Groq's hourly limit (v1.3.0); audio track picker (v1.1.0); 30-second parts for sync, `Movie.srt` naming (v1.0.0).
+Earlier: separate logs per tab and Clear Log (v1.5.2); new name (v1.5.1); Cutter and Joiner tabs, smart cut, cleaner subtitles (v1.5.0); charcoal and green theme (v1.4.0); whisper-large-v3 only (v1.3.1); long films wait out Groq's hourly limit (v1.3.0); audio track picker (v1.1.0); 30-second parts for sync, `Movie.srt` naming (v1.0.0).
 
 See the README for details and error codes.
