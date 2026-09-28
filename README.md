@@ -1,3 +1,9 @@
+![enter image description here](https://files.catbox.moe/cidjje.png)
+![enter image description here](https://files.catbox.moe/2l29rz.png)
+![enter image description here](https://files.catbox.moe/y3g65i.png)
+![enter image description here](https://files.catbox.moe/7bieve.png)
+![enter image description here](https://files.catbox.moe/e87f39.png)
+
 # English Subtitles Generator, Cut & Join Videos
 
 Three tools for movies on your Mac, in one small app: **English subtitles** for foreign-language films, a frame-exact **Cutter/Splitter**, and a **Joiner**. They're described below, subtitles first.
