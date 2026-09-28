@@ -1,4 +1,5 @@
 import AppKit
+import SubtitleCore
 import SwiftUI
 
 @main
