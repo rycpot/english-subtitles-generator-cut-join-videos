@@ -89,20 +89,12 @@ struct ContentView: View {
         .frame(height: 180)
         .animation(.easeOut(duration: 0.15), value: isTargeted)
         .onDrop(of: [UTType.fileURL], isTargeted: $isTargeted) { providers in
-            for provider in providers {
-                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
-                    var url: URL?
-                    if let data = item as? Data {
-                        url = URL(dataRepresentation: data, relativeTo: nil)
-                    } else if let u = item as? URL {
-                        url = u
-                    }
-                    if let url {
-                        Task { @MainActor in JobQueue.shared.add([url]) }
-                    }
-                }
+            loadDroppedURLs(providers) { urls in
+                // Queue files dropped together in natural name order ("part 2" before "part 10").
+                JobQueue.shared.add(urls.sorted {
+                    $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending
+                })
             }
-            return true
         }
     }
 

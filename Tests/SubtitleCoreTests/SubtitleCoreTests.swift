@@ -506,3 +506,24 @@ final class FrameClockTests: XCTestCase {
         XCTAssertEqual(film.clamp(FrameTime(minutes: 1, seconds: 30), to: limit), FrameTime(minutes: 1, seconds: 30))
     }
 }
+
+final class JoinSorterTests: XCTestCase {
+    let items = [
+        JoinSortItem(name: "Film part 10 of 12.mp4", modified: Date(timeIntervalSince1970: 300), duration: 30),
+        JoinSortItem(name: "Film part 2 of 12.mp4", modified: Date(timeIntervalSince1970: 100), duration: nil),
+        JoinSortItem(name: "Film part 1 of 12.mp4", modified: Date(timeIntervalSince1970: 200), duration: 29.9),
+        JoinSortItem(name: "Film part 2 of 12.mp4", modified: nil, duration: 30.5),
+    ]
+
+    func testNaturalNameOrderIsStable() {
+        XCTAssertEqual(JoinSorter.order(items, by: .name, ascending: true), [2, 1, 3, 0])
+        XCTAssertEqual(JoinSorter.order(items, by: .name, ascending: false), [0, 1, 3, 2])
+    }
+
+    func testMissingValuesSortLast() {
+        XCTAssertEqual(JoinSorter.order(items, by: .modified, ascending: true), [1, 2, 0, 3])
+        XCTAssertEqual(JoinSorter.order(items, by: .modified, ascending: false), [0, 2, 1, 3])
+        XCTAssertEqual(JoinSorter.order(items, by: .duration, ascending: true), [2, 0, 3, 1])
+        XCTAssertEqual(JoinSorter.order(items, by: .duration, ascending: false), [3, 0, 2, 1])
+    }
+}

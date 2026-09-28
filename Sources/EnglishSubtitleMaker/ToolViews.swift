@@ -5,9 +5,14 @@ import UniformTypeIdentifiers
 
 // MARK: - Shared pieces
 
-/// Loads file URLs from a drop.
+/// Loads file URLs from a drop and hands them over together once all are read,
+/// so files dropped in one go can be sorted as a group.
 func loadDroppedURLs(_ providers: [NSItemProvider], _ handle: @escaping ([URL]) -> Void) -> Bool {
+    let group = DispatchGroup()
+    let lock = NSLock()
+    var urls: [URL] = []
     for provider in providers {
+        group.enter()
         provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
             var url: URL?
             if let data = item as? Data {
@@ -15,8 +20,14 @@ func loadDroppedURLs(_ providers: [NSItemProvider], _ handle: @escaping ([URL]) 
             } else if let u = item as? URL {
                 url = u
             }
-            if let url { Task { @MainActor in handle([url]) } }
+            if let url { lock.lock(); urls.append(url); lock.unlock() }
+            group.leave()
         }
+    }
+    group.notify(queue: .main) {
+        let all = urls
+        guard !all.isEmpty else { return }
+        Task { @MainActor in handle(all) }
     }
     return true
 }
@@ -399,9 +410,28 @@ struct JoinerView: View {
                 HStack {
                     SectionTitle("Pieces, in order")
                     Spacer()
-                    Text("Drag to reorder")
+                    Text("Drag to reorder, or sort:")
                         .font(.system(size: 10))
                         .foregroundColor(Theme.textFaint)
+                    Menu {
+                        ForEach(JoinSortKey.allCases) { key in
+                            Button(key == .name ? "Name (natural)" : key.rawValue) {
+                                model.sort(by: key, ascending: model.sortAscending)
+                            }
+                        }
+                    } label: {
+                        Text(model.sortKey == .name ? "Name (natural)" : model.sortKey.rawValue)
+                            .font(.system(size: 11))
+                    }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .disabled(model.isRunning)
+                    Button { model.sort(by: model.sortKey, ascending: !model.sortAscending) } label: {
+                        Image(systemName: model.sortAscending ? "arrow.up" : "arrow.down")
+                    }
+                    .buttonStyle(.pillSmall)
+                    .help(model.sortAscending ? "Ascending: click for descending" : "Descending: click for ascending")
+                    .disabled(model.isRunning)
                 }
                 List {
                     ForEach(Array(model.pieces.enumerated()), id: \.element.id) { index, piece in

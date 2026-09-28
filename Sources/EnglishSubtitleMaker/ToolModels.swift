@@ -231,11 +231,17 @@ final class CutterModel: ToolModel {
 struct JoinPiece: Identifiable {
     let id = UUID()
     let url: URL
+    var modified: Date?
     var info: ProbeResult?
     var whole = true
     var fields = RangeFields(start: "00:00:00", endMode: .duration, end: "00:01:00")
     var preview = RangePreview()
     var loadFailed = false
+
+    var sortItem: JoinSortItem {
+        let length: Double? = { if case .success(let r) = range { return r.upperBound - r.lowerBound }; return nil }()
+        return JoinSortItem(name: url.lastPathComponent, modified: modified, duration: length)
+    }
 
     var range: Result<ClosedRange<Double>, String> {
         guard let info else { return .failure(loadFailed ? "Could not read this file." : "Reading…") }
@@ -251,18 +257,31 @@ final class JoinerModel: ToolModel {
     @Published var pieces: [JoinPiece] = []
     /// Format to convert to when pieces differ: nil = automatic, else a piece id.
     @Published var matchPiece: UUID?
+    @Published var sortKey: JoinSortKey = .name
+    @Published var sortAscending = true
     private var previewTasks: [UUID: Task<Void, Never>] = [:]
 
     init() {
         super.init(status: "Add two or more videos, or cuts of them, then click Join.", channel: .joiner)
     }
 
+    /// Files dropped together are added in natural name order ("part 2" before "part 10").
     func add(_ urls: [URL]) {
-        for url in urls where JobQueue.videoExtensions.contains(url.pathExtension.lowercased()) {
-            let piece = JoinPiece(url: url)
+        var batch = urls.filter { JobQueue.videoExtensions.contains($0.pathExtension.lowercased()) }.map { url in
+            JoinPiece(url: url, modified: (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate)
+        }
+        batch = JoinSorter.order(batch.map(\.sortItem), by: .name, ascending: true).map { batch[$0] }
+        for piece in batch {
             pieces.append(piece)
             load(piece.id)
         }
+    }
+
+    /// Re-orders the list once; pieces can still be moved by hand afterwards.
+    func sort(by key: JoinSortKey, ascending: Bool) {
+        sortKey = key
+        sortAscending = ascending
+        pieces = JoinSorter.order(pieces.map(\.sortItem), by: key, ascending: ascending).map { pieces[$0] }
     }
 
     private func load(_ id: UUID) {
@@ -278,7 +297,7 @@ final class JoinerModel: ToolModel {
     /// Adds another cut from the same file right after `id`.
     func addCut(after id: UUID) {
         guard let i = pieces.firstIndex(where: { $0.id == id }) else { return }
-        var piece = JoinPiece(url: pieces[i].url)
+        var piece = JoinPiece(url: pieces[i].url, modified: pieces[i].modified)
         piece.info = pieces[i].info
         piece.whole = false
         pieces.insert(piece, at: i + 1)
