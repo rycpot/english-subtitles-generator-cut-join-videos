@@ -69,6 +69,28 @@ enum APIKeyStore {
 
 enum PrefKeys {
     static let dialogueFocus = "dialogueFocus"
+    static let contextMode = "contextMode"
+}
+
+/// What each part (after the first) is told about the part before it.
+enum ContextMode: String, CaseIterable, Identifiable {
+    /// The last English lines of the previous part go along as a prompt, and a
+    /// part that comes back with very few words is asked again without it.
+    case previousWithRetry
+    /// Every part is translated on its own.
+    case none
+    /// The last English lines go along as a prompt (up to v1.5.5).
+    case previous
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .previousWithRetry: return "Previous lines, re-ask thin parts without them"
+        case .none: return "No context: every part on its own"
+        case .previous: return "Previous lines only (as before v1.5.6)"
+        }
+    }
 }
 
 struct PipelineSettings {
@@ -76,6 +98,7 @@ struct PipelineSettings {
     /// On 5.1/7.1 tracks, use only the centre channel, where dialogue is
     /// mixed, to keep music and effects from confusing the recogniser.
     var dialogueFocus: Bool
+    var contextMode: ContextMode
 
     static func current() -> PipelineSettings {
         let d = UserDefaults.standard
@@ -83,6 +106,7 @@ struct PipelineSettings {
             // Only whisper-large-v3 can translate; an older setting that
             // chose the turbo model is ignored.
             model: Groq.defaultModel,
-            dialogueFocus: d.object(forKey: PrefKeys.dialogueFocus) as? Bool ?? true)
+            dialogueFocus: d.object(forKey: PrefKeys.dialogueFocus) as? Bool ?? true,
+            contextMode: ContextMode(rawValue: d.string(forKey: PrefKeys.contextMode) ?? "") ?? .previousWithRetry)
     }
 }

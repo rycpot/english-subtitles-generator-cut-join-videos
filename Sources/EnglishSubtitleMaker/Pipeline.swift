@@ -91,6 +91,7 @@ final class Pipeline {
 
         var results: [ChunkResult] = []
         var previousText: String?
+        log(.detail, "Context between parts: \(settings.contextMode.title).")
         var lastRequest: Date?
         let total = plan.parts.count
         for (i, part) in plan.parts.enumerated() {
@@ -124,7 +125,8 @@ final class Pipeline {
                         throw SubtitleError(.badResponse, String(decoding: data.prefix(300), as: UTF8.self))
                     }
                 }
-                var (data, reply) = try await request(prompt: previousText)
+                let context = settings.contextMode == .none ? nil : previousText
+                var (data, reply) = try await request(prompt: context)
                 // Whisper sometimes mistakes the language of a short part and
                 // answers in Chinese, Japanese etc. Ask once more with an
                 // English-only hint and no context from earlier parts.
@@ -134,6 +136,22 @@ final class Pipeline {
                     let retryRatio = Self.foreignRatio(retry)
                     log(.detail, "\(label): came back \(Int(ratio * 100))% non-English; asked again → \(Int(retryRatio * 100))%.")
                     if retryRatio < ratio { (data, reply) = (retryData, retry) }
+                }
+                // With the previous part's lines as a prompt, Whisper now and then
+                // treats the audio as already covered and returns a line or two
+                // for a long stretch of speech. Ask again without the prompt and
+                // keep whichever reply has more words.
+                if settings.contextMode == .previousWithRetry, context != nil {
+                    let words = Self.wordCount(reply)
+                    let length = part.end - part.start
+                    if Double(words) < Self.thinWordsPerSecond * length {
+                        let (retryData, retry) = try await request(prompt: nil)
+                        let retryWords = Self.wordCount(retry)
+                        let keep = retryWords > words
+                        log(.detail, "\(label): only \(words) word\(words == 1 ? "" : "s") for \(Int(length.rounded())) s; "
+                            + "asked again without context → \(retryWords) words (\(keep ? "kept the new reply" : "kept the first"))).")
+                        if keep { (data, reply) = (retryData, retry) }
+                    }
                 }
                 response = reply
                 try? data.write(to: resultFile, options: .atomic)
@@ -356,6 +374,16 @@ final class Pipeline {
     static let englishHint = "The following is the English translation of the dialogue in a film."
 
     /// Share of non-Latin letters across a reply's segments.
+    /// Below this many English words per second of audio, a reply counts as thin.
+    /// Normal dialogue runs at 2–3 words a second.
+    static let thinWordsPerSecond = 0.6
+
+    /// Words in the subtitle lines a reply would give.
+    static func wordCount(_ reply: GroqVerboseResponse) -> Int {
+        (reply.segments ?? []).compactMap(SubtitleBuilder.subtitleText)
+            .reduce(0) { $0 + $1.split(whereSeparator: \.isWhitespace).count }
+    }
+
     static func foreignRatio(_ reply: GroqVerboseResponse) -> Double {
         let text = (reply.segments ?? []).map(\.text).joined(separator: " ")
         return SubtitleBuilder.foreignRatio(text)
