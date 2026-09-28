@@ -139,7 +139,7 @@ final class MediaTools {
 
         var videoList = ""
         var otherList = ""
-        var junctions: [Double] = []   // output times where a copied and an encoded part meet
+        var junctions: [Junction] = []   // where a copied and an encoded part meet
         var outputTime = 0.0
         var step = 0
         let plans: [[CutPiece]] = try await pieces.asyncMap { piece in
@@ -168,7 +168,10 @@ final class MediaTools {
                 let file = work.appendingPathComponent("v\(p)_\(i).ts")
                 try await writeVideo(cut, of: piece, to: file)
                 videoList += "file '\(file.path)'\nduration \(String(format: "%.6f", cut.duration))\n"
-                if i > 0, plan[i - 1].isCopy != cut.isCopy { junctions.append(outputTime) }
+                if i > 0, plan[i - 1].isCopy != cut.isCopy {
+                    junctions.append(Junction(output: outputTime, source: piece.url,
+                                              sourceTime: cut.start - piece.probe.startTime))
+                }
                 outputTime += cut.duration
             }
             if hasOthers {
@@ -350,18 +353,48 @@ final class MediaTools {
         ["mp4", "m4v", "mov"].contains(url.pathExtension.lowercased())
     }
 
+    /// A place in the output where a copied and a re-encoded part meet, and the
+    /// same moment in the source file (seconds from its start).
+    struct Junction {
+        let output: Double
+        let source: URL
+        let sourceTime: Double
+    }
+
     /// Decodes a few seconds around each join and returns the first error, if any.
-    private func decodeProblem(_ file: URL, at times: [Double]) async throws -> String? {
-        for t in times {
-            let result = try await tool(ffmpeg, ["-hide_banner", "-nostdin", "-v", "error",
-                                                 "-ss", String(format: "%.3f", max(0, t - 3)), "-i", file.path,
-                                                 "-t", "6", "-map", "0:v:0", "-f", "null", "-"])
-            let errors = result.stderrLines.filter { !$0.contains("non monotonically increasing dts") }
-            if result.status != 0 || !errors.isEmpty {
-                return "at \(TimeCode.format(t)): \(errors.first ?? "exit code \(result.status)")"
+    /// Starting to decode in the middle of open-GOP video gives errors even in the
+    /// untouched source, so errors the source shows at the same spot are ignored.
+    private func decodeProblem(_ file: URL, at junctions: [Junction]) async throws -> String? {
+        for j in junctions {
+            let (status, errors) = try await windowErrors(file, around: j.output)
+            if status != 0 { return "at \(TimeCode.format(j.output)): \(errors.first ?? "exit code \(status)")" }
+            guard !errors.isEmpty else { continue }
+            var expected = try await windowErrors(j.source, around: j.sourceTime).errors.map(Self.withoutPrefix)
+            for error in errors {
+                if let i = expected.firstIndex(of: Self.withoutPrefix(error)) {
+                    expected.remove(at: i)
+                } else {
+                    return "at \(TimeCode.format(j.output)): \(error)"
+                }
             }
         }
         return nil
+    }
+
+    /// Decoding errors in the 6 s of video around `time` (seconds from the file's start).
+    private func windowErrors(_ file: URL, around time: Double) async throws -> (status: Int32, errors: [String]) {
+        let result = try await tool(ffmpeg, ["-hide_banner", "-nostdin", "-v", "error",
+                                             "-ss", String(format: "%.3f", max(0, time - 3)), "-i", file.path,
+                                             "-t", "6", "-map", "0:v:0", "-f", "null", "-"])
+        return (result.status, result.stderrLines.filter {
+            !$0.contains("non monotonically increasing dts") && !$0.contains("Last message repeated")
+        })
+    }
+
+    /// "[h264 @ 0x7f…] message" → "message", so errors from different runs compare equal.
+    private static func withoutPrefix(_ line: String) -> String {
+        guard line.hasPrefix("["), let end = line.firstIndex(of: "]") else { return line }
+        return line[line.index(after: end)...].trimmingCharacters(in: .whitespaces)
     }
 
     struct ToolResult {
