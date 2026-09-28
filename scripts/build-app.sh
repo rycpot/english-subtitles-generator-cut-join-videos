@@ -3,7 +3,7 @@
 #
 #   FFMPEG_BIN=/path/to/ffmpeg scripts/build-app.sh
 #
-# FFMPEG_BIN: static ffmpeg to bundle (required unless SKIP_FFMPEG=1).
+# FFMPEG_BIN, FFPROBE_BIN: static ffmpeg and ffprobe to bundle (required unless SKIP_FFMPEG=1).
 # ARCH: x86_64 (default) or arm64.
 # VERSION: shown in Finder's Get Info (default 1.0.0).
 set -euo pipefail
@@ -53,11 +53,16 @@ if [ "${SKIP_FFMPEG:-0}" != "1" ]; then
   chmod 755 "$APP/Contents/Resources/ffmpeg"
   require_monterey "$APP/Contents/Resources/ffmpeg"
   lipo -archs "$APP/Contents/Resources/ffmpeg"
+  : "${FFPROBE_BIN:?set FFPROBE_BIN to a static ffprobe binary}"
+  cp "$FFPROBE_BIN" "$APP/Contents/Resources/ffprobe"
+  chmod 755 "$APP/Contents/Resources/ffprobe"
+  require_monterey "$APP/Contents/Resources/ffprobe"
 fi
 
 # Ad-hoc signature: not notarised, but lets macOS run the bundle after the
 # quarantine flag is removed (see README).
 codesign --force --sign - "$APP/Contents/Resources/ffmpeg" 2>/dev/null || true
+codesign --force --sign - "$APP/Contents/Resources/ffprobe" 2>/dev/null || true
 codesign --force --sign - "$APP"
 codesign --verify --verbose "$APP"
 

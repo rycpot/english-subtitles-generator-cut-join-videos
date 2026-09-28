@@ -3,22 +3,50 @@ import SubtitleCore
 import SwiftUI
 import UniformTypeIdentifiers
 
+enum AppTab: String, CaseIterable, Identifiable {
+    case subtitles = "Subtitles"
+    case cutter = "Cutter"
+    case joiner = "Joiner"
+    var id: String { rawValue }
+
+    var icon: String {
+        switch self {
+        case .subtitles: return "captions.bubble"
+        case .cutter: return "scissors"
+        case .joiner: return "rectangle.stack.badge.plus"
+        }
+    }
+}
+
+@MainActor
 struct ContentView: View {
     @EnvironmentObject var queue: JobQueue
+    @StateObject private var cutter = CutterModel()
+    @StateObject private var joiner = JoinerModel()
+    @AppStorage("selectedTab") private var tab: AppTab = .subtitles
     @State private var isTargeted = false
     @State private var showImporter = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Header()
-            APIKeyBar()
-            dropZone
-            if !queue.jobs.isEmpty { jobList }
-            progressSection
+            TabBar(selection: $tab, busy: [.subtitles: queue.isRunning, .cutter: cutter.isRunning, .joiner: joiner.isRunning])
+            switch tab {
+            case .subtitles:
+                APIKeyBar()
+                dropZone
+                if !queue.jobs.isEmpty { jobList }
+                progressSection
+            case .cutter:
+                CutterView(model: cutter)
+            case .joiner:
+                JoinerView(model: joiner)
+            }
             LogView()
+                .frame(minHeight: 120)
         }
         .padding(18)
-        .frame(minWidth: 660, minHeight: 640)
+        .frame(minWidth: 760, minHeight: 760)
         .background(Theme.background.ignoresSafeArea())
         .foregroundColor(Theme.text)
         .preferredColorScheme(.dark)
@@ -124,6 +152,41 @@ struct ContentView: View {
     }
 }
 
+/// Pill-shaped tab switcher; a dot marks tabs with a job running.
+struct TabBar: View {
+    @Binding var selection: AppTab
+    let busy: [AppTab: Bool]
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(AppTab.allCases) { tab in
+                Button {
+                    selection = tab
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: tab.icon)
+                        Text(tab.rawValue)
+                        if busy[tab] == true {
+                            Circle().fill(Theme.mint).frame(width: 6, height: 6)
+                        }
+                    }
+                    .font(.system(size: 12, weight: selection == tab ? .semibold : .medium))
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 7)
+                    .foregroundColor(selection == tab ? Theme.onAccent : Theme.textSecondary)
+                    .background(Capsule().fill(selection == tab ? Theme.accent : Color.clear))
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+            Spacer()
+        }
+        .padding(4)
+        .background(Capsule().fill(Theme.surface))
+        .overlay(Capsule().stroke(Theme.border, lineWidth: 1))
+    }
+}
+
 struct Header: View {
     var body: some View {
         HStack(spacing: 10) {
@@ -133,7 +196,7 @@ struct Header: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text("English Subtitle Maker")
                     .font(.system(size: 16, weight: .bold))
-                Text("Whisper large-v3 on Groq")
+                Text("Subtitles · Cutter · Joiner")
                     .font(.system(size: 11))
                     .foregroundColor(Theme.textFaint)
             }

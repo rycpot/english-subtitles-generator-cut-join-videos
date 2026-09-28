@@ -22,6 +22,11 @@ public enum ErrorCode: String, CaseIterable {
     // 3xx: writing the subtitle
     case writeFailed = "E301"
     case noSpeech = "E302"
+    // 4xx: Cutter and Joiner
+    case ffprobeMissing = "E401"
+    case mediaUnreadable = "E402"
+    case cutFailed = "E403"
+    case joinFailed = "E404"
     // 9xx: other
     case cancelled = "E900"
     case unexpected = "E999"
@@ -44,6 +49,10 @@ public enum ErrorCode: String, CaseIterable {
         case .badResponse: return "Unexpected reply from Groq"
         case .writeFailed: return "Could not save the .srt file"
         case .noSpeech: return "No speech was found"
+        case .ffprobeMissing: return "ffprobe not found"
+        case .mediaUnreadable: return "Cannot read the video"
+        case .cutFailed: return "Cutting failed"
+        case .joinFailed: return "Joining failed"
         case .cancelled: return "Cancelled"
         case .unexpected: return "Unexpected error"
         }
@@ -81,6 +90,12 @@ public enum ErrorCode: String, CaseIterable {
             return "The folder may be read-only, or macOS blocked access (System Preferences → Security & Privacy → Files and Folders)."
         case .noSpeech:
             return "Groq returned no dialogue. Check that the right audio track was used (see the log)."
+        case .ffprobeMissing:
+            return "The bundled ffprobe is missing. Re-download the app."
+        case .mediaUnreadable:
+            return "The file may be damaged, or it has no video track. Check that it plays in VLC."
+        case .cutFailed, .joinFailed:
+            return "See the ffmpeg lines above in the log. Check there is enough free disk space (about twice the size of the result)."
         case .cancelled:
             return "Stopped by you. Finished parts are remembered."
         case .unexpected:

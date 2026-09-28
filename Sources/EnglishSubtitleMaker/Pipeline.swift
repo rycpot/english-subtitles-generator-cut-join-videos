@@ -108,30 +108,45 @@ final class Pipeline {
             if response == nil {
                 progress(0.30 + 0.68 * Double(i) / Double(total),
                          "Translating part \(i + 1) of \(total) (\(Self.clock(part.start)))…")
-                if let lastRequest {
-                    let wait = Self.minSecondsBetweenRequests - Date().timeIntervalSince(lastRequest)
-                    if wait > 0 { try await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000)) }
-                }
-                lastRequest = Date()
                 let file = workDir.appendingPathComponent(part.file)
-                let data = try await client.translateAudio(file: file, mimeType: plan.mimeType,
-                                                           model: settings.model, prompt: previousText)
-                do {
-                    response = try JSONDecoder().decode(GroqVerboseResponse.self, from: data)
-                } catch {
-                    let snippet = String(decoding: data.prefix(300), as: UTF8.self)
-                    throw SubtitleError(.badResponse, snippet)
+                // Waits so requests stay under Groq's per-minute limit.
+                func request(prompt: String?) async throws -> (Data, GroqVerboseResponse) {
+                    if let lastRequest {
+                        let wait = Self.minSecondsBetweenRequests - Date().timeIntervalSince(lastRequest)
+                        if wait > 0 { try await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000)) }
+                    }
+                    lastRequest = Date()
+                    let data = try await client.translateAudio(file: file, mimeType: plan.mimeType,
+                                                               model: settings.model, prompt: prompt)
+                    do {
+                        return (data, try JSONDecoder().decode(GroqVerboseResponse.self, from: data))
+                    } catch {
+                        throw SubtitleError(.badResponse, String(decoding: data.prefix(300), as: UTF8.self))
+                    }
                 }
+                var (data, reply) = try await request(prompt: previousText)
+                // Whisper sometimes mistakes the language of a short part and
+                // answers in Chinese, Japanese etc. Ask once more with an
+                // English-only hint and no context from earlier parts.
+                let ratio = Self.foreignRatio(reply)
+                if ratio > 0.3 {
+                    let (retryData, retry) = try await request(prompt: Self.englishHint)
+                    let retryRatio = Self.foreignRatio(retry)
+                    log(.detail, "\(label): came back \(Int(ratio * 100))% non-English; asked again → \(Int(retryRatio * 100))%.")
+                    if retryRatio < ratio { (data, reply) = (retryData, retry) }
+                }
+                response = reply
                 try? data.write(to: resultFile, options: .atomic)
             }
             let segments = response?.segments ?? []
-            let kept = segments.filter { !SubtitleBuilder.isLikelyHallucination($0) }
-            log(.detail, "\(label): \(kept.count) line\(kept.count == 1 ? "" : "s")"
-                + (kept.count < segments.count ? " (\(segments.count - kept.count) dropped as noise)" : "")
-                + ": \(kept.map { SubtitleBuilder.cleaned($0.text) }.joined(separator: " / ").prefix(90))")
-            // Give the next part the last lines as context for names and style.
-            let tail = kept.suffix(2).map(\.text).joined(separator: " ").trimmingCharacters(in: .whitespaces)
-            previousText = tail.isEmpty ? nil : String(tail.suffix(300))
+            let lines = segments.compactMap(SubtitleBuilder.subtitleText)
+            log(.detail, "\(label): \(lines.count) line\(lines.count == 1 ? "" : "s")"
+                + (lines.count < segments.count ? " (\(segments.count - lines.count) left out)" : "")
+                + ": \(lines.joined(separator: " / ").prefix(90))")
+            // Give the next part the last English lines as context for names and
+            // style (never foreign text, which would pull Whisper off course).
+            let tail = lines.suffix(2).joined(separator: " ")
+            previousText = tail.count < 10 ? nil : String(tail.suffix(300))
             results.append(ChunkResult(offset: part.start, length: part.end - part.start, segments: segments))
         }
         let silentCount = plan.parts.filter(\.silent).count
@@ -336,6 +351,14 @@ final class Pipeline {
     private static func ptsTime(_ line: String) -> Double? {
         guard let r = line.range(of: "pts_time:") else { return nil }
         return Double(line[r.upperBound...].prefix { !$0.isWhitespace })
+    }
+
+    static let englishHint = "The following is the English translation of the dialogue in a film."
+
+    /// Share of non-Latin letters across a reply's segments.
+    static func foreignRatio(_ reply: GroqVerboseResponse) -> Double {
+        let text = (reply.segments ?? []).map(\.text).joined(separator: " ")
+        return SubtitleBuilder.foreignRatio(text)
     }
 
     static func clock(_ seconds: Double) -> String {

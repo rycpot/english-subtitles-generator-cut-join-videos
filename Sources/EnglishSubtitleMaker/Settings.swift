@@ -26,15 +26,18 @@ enum AppPaths {
     }
 
     /// Bundled ffmpeg first, then common install locations.
-    static func findFFmpeg() -> URL? {
+    static func findFFmpeg() -> URL? { findTool("ffmpeg") }
+
+    /// A bundled command-line tool (ffmpeg, ffprobe), else a common install location.
+    static func findTool(_ name: String) -> URL? {
         var candidates: [URL] = []
-        if let bundled = Bundle.main.url(forResource: "ffmpeg", withExtension: nil) {
+        if let bundled = Bundle.main.url(forResource: name, withExtension: nil) {
             candidates.append(bundled)
         }
         let exeDir = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent()
-        candidates.append(exeDir.appendingPathComponent("ffmpeg"))
-        for path in ["/usr/local/bin/ffmpeg", "/opt/homebrew/bin/ffmpeg", "/opt/local/bin/ffmpeg"] {
-            candidates.append(URL(fileURLWithPath: path))
+        candidates.append(exeDir.appendingPathComponent(name))
+        for dir in ["/usr/local/bin", "/opt/homebrew/bin", "/opt/local/bin", "/usr/bin"] {
+            candidates.append(URL(fileURLWithPath: dir).appendingPathComponent(name))
         }
         return candidates.first { FileManager.default.isExecutableFile(atPath: $0.path) }
     }

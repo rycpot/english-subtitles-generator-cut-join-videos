@@ -1,0 +1,381 @@
+import AppKit
+import Foundation
+import SubtitleCore
+
+/// Previews of the first and last frame of a range.
+struct RangePreview: Equatable {
+    var start: NSImage?
+    var end: NSImage?
+}
+
+/// Shared by the Cutter and Joiner: running one job at a time with progress.
+@MainActor
+class ToolModel: ObservableObject {
+    @Published var isRunning = false
+    @Published var progress: Double = 0
+    @Published var status: String
+    @Published var lastOutputs: [URL] = []
+    private var worker: Task<Void, Never>?
+
+    init(status: String) {
+        self.status = status
+    }
+
+    func log(_ level: LogLevel, _ text: String) {
+        JobQueue.shared.append(level, text)
+    }
+
+    func makeTools() throws -> MediaTools {
+        try MediaTools.make(
+            log: { level, text in Task { @MainActor in JobQueue.shared.append(level, text) } },
+            progress: { [weak self] value, step in
+                Task { @MainActor in
+                    guard let self, self.isRunning else { return }
+                    self.progress = max(self.progress, value)
+                    self.status = step
+                }
+            })
+    }
+
+    /// Runs `body` as the current job; errors are reported with their codes.
+    func start(_ title: String, _ body: @escaping (MediaTools) async throws -> [URL]) {
+        guard !isRunning else { return }
+        isRunning = true
+        progress = 0
+        lastOutputs = []
+        status = "Starting…"
+        log(.info, "▶︎ \(title)")
+        let started = Date()
+        worker = Task {
+            defer {
+                isRunning = false
+                worker = nil
+            }
+            do {
+                let tools = try makeTools()
+                let outputs = try await body(tools)
+                progress = 1
+                lastOutputs = outputs
+                let secs = Int(Date().timeIntervalSince(started))
+                for url in outputs { log(.success, "✓ Saved \(url.lastPathComponent)") }
+                status = "Done in \(secs / 60) min \(secs % 60) s."
+            } catch is CancellationError {
+                log(.warning, "✗ \(ErrorCode.cancelled.rawValue) Cancelled.")
+                status = "Cancelled."
+            } catch let error as SubtitleError {
+                log(.error, "✗ \(error.description)")
+                log(.detail, "→ \(error.code.hint)")
+                status = "Failed: \(error.code.rawValue) \(error.code.title)"
+            } catch {
+                log(.error, "✗ \(ErrorCode.unexpected.rawValue) \(error.localizedDescription)")
+                status = "Failed."
+            }
+        }
+    }
+
+    func cancel() {
+        worker?.cancel()
+    }
+
+    /// Probes a file for the editors (length, format), logging problems.
+    func probe(_ url: URL) async -> ProbeResult? {
+        do {
+            return try await makeTools().probe(url)
+        } catch let error as SubtitleError {
+            log(.error, "✗ \(error.description)")
+            return nil
+        } catch {
+            return nil
+        }
+    }
+
+    /// Stills of the first frame and the last frame of a range.
+    func previews(_ url: URL, probe: ProbeResult, range: ClosedRange<Double>) async -> RangePreview {
+        guard let tools = try? makeTools(), let v = probe.video else { return RangePreview() }
+        let lastFrame = max(range.lowerBound, range.upperBound - probe.frameDuration)
+        async let a = tools.thumbnail(url, at: range.lowerBound, videoIndex: v.index)
+        async let b = tools.thumbnail(url, at: lastFrame, videoIndex: v.index)
+        return RangePreview(start: await a, end: await b)
+    }
+
+    /// "Movie [00.20.00–00.22.00].mkv", with " (2)" etc. if it exists.
+    static func uniqueURL(in folder: URL, base: String, ext: String) -> URL {
+        let fm = FileManager.default
+        var url = folder.appendingPathComponent("\(base).\(ext)")
+        var n = 2
+        while fm.fileExists(atPath: url.path) {
+            url = folder.appendingPathComponent("\(base) (\(n)).\(ext)")
+            n += 1
+        }
+        return url
+    }
+}
+
+enum SplitKind: String, CaseIterable, Identifiable {
+    case none = "Don't split"
+    case count = "Into equal parts"
+    case length = "Into parts of"
+    var id: String { rawValue }
+}
+
+@MainActor
+final class CutterModel: ToolModel {
+    @Published var file: URL?
+    @Published var info: ProbeResult?
+    @Published var fields = RangeFields(start: "00:00:00", endMode: .duration, end: "00:01:00") {
+        didSet { if fields != oldValue { schedulePreview() } }
+    }
+    @Published var splitKind: SplitKind = .none
+    @Published var splitCount = "4"
+    @Published var splitLength = "00:00:30"
+    @Published var preview = RangePreview()
+    private var previewTask: Task<Void, Never>?
+
+    init() {
+        super.init(status: "Drop a video to cut.")
+    }
+
+    var range: Result<ClosedRange<Double>, RangeError> {
+        fields.resolve(fileDuration: info?.duration)
+    }
+
+    var splitMode: Result<SplitMode, String> {
+        switch splitKind {
+        case .none:
+            return .success(.none)
+        case .count:
+            guard let n = Int(splitCount.trimmingCharacters(in: .whitespaces)), (2...500).contains(n) else {
+                return .failure("Number of parts must be between 2 and 500.")
+            }
+            return .success(.count(n))
+        case .length:
+            guard let l = TimeCode.parse(splitLength), l >= 0.5 else {
+                return .failure("Part length isn't valid. Use hh:mm:ss, for example 00:00:30.")
+            }
+            return .success(.length(l))
+        }
+    }
+
+    /// The ranges that will be written, or what is wrong.
+    var plannedRanges: Result<[(start: Double, end: Double)], String> {
+        switch (range, splitMode) {
+        case (.failure(let e), _): return .failure(e.description)
+        case (_, .failure(let e)): return .failure(e)
+        case (.success(let r), .success(let mode)):
+            let parts = RangeSplitter.split(start: r.lowerBound, end: r.upperBound, mode: mode)
+            return parts.count > 500 ? .failure("That would make \(parts.count) files; use longer parts.") : .success(parts)
+        }
+    }
+
+    func load(_ url: URL) {
+        file = url
+        info = nil
+        preview = RangePreview()
+        status = "Reading \(url.lastPathComponent)…"
+        Task {
+            info = await probe(url)
+            if let info {
+                status = "\(url.lastPathComponent): \(TimeCode.format(info.duration)) long. Set the range and click Cut."
+                schedulePreview()
+            } else {
+                status = "Could not read \(url.lastPathComponent)."
+            }
+        }
+    }
+
+    private func schedulePreview() {
+        previewTask?.cancel()
+        guard let file, let info, case .success(let r) = range else {
+            preview = RangePreview()
+            return
+        }
+        previewTask = Task {
+            try? await Task.sleep(nanoseconds: 450_000_000)
+            guard !Task.isCancelled else { return }
+            let p = await previews(file, probe: info, range: r)
+            if !Task.isCancelled { preview = p }
+        }
+    }
+
+    func run() {
+        guard let file, let info, case .success(let ranges) = plannedRanges else { return }
+        let base = file.deletingPathExtension().lastPathComponent
+        let folder = file.deletingLastPathComponent()
+        let ext = file.pathExtension.isEmpty ? "mkv" : file.pathExtension
+        guard case .success(let whole) = range else { return }
+        let label = "[\(TimeCode.fileSafe(whole.lowerBound))–\(TimeCode.fileSafe(whole.upperBound))]"
+        let title = ranges.count == 1
+            ? "Cutting \(file.lastPathComponent) \(TimeCode.format(whole.lowerBound))–\(TimeCode.format(whole.upperBound))"
+            : "Cutting \(file.lastPathComponent) into \(ranges.count) parts"
+        start(title) { tools in
+            var outputs: [URL] = []
+            for (i, r) in ranges.enumerated() {
+                try Task.checkCancellation()
+                let name = ranges.count == 1 ? "\(base) \(label)" : "\(base) \(label) part \(i + 1) of \(ranges.count)"
+                let out = Self.uniqueURL(in: folder, base: name, ext: ext)
+                await MainActor.run { self.status = "Part \(i + 1) of \(ranges.count)…" }
+                let piece = MediaPiece(url: file, probe: info, start: r.start, end: r.end)
+                try await tools.render([piece], to: out)
+                outputs.append(out)
+            }
+            return outputs
+        }
+    }
+}
+
+/// One entry in the Joiner: a whole file or a range of it.
+struct JoinPiece: Identifiable {
+    let id = UUID()
+    let url: URL
+    var info: ProbeResult?
+    var whole = true
+    var fields = RangeFields(start: "00:00:00", endMode: .duration, end: "00:01:00")
+    var preview = RangePreview()
+    var loadFailed = false
+
+    var range: Result<ClosedRange<Double>, String> {
+        guard let info else { return .failure(loadFailed ? "Could not read this file." : "Reading…") }
+        if whole { return .success(0...info.duration) }
+        return fields.resolve(fileDuration: info.duration).mapError { $0.description }
+    }
+}
+
+extension String: Error {}
+
+@MainActor
+final class JoinerModel: ToolModel {
+    @Published var pieces: [JoinPiece] = []
+    /// Format to convert to when pieces differ: nil = automatic, else a piece id.
+    @Published var matchPiece: UUID?
+    private var previewTasks: [UUID: Task<Void, Never>] = [:]
+
+    init() {
+        super.init(status: "Add two or more videos, or cuts of them, then click Join.")
+    }
+
+    func add(_ urls: [URL]) {
+        for url in urls where JobQueue.videoExtensions.contains(url.pathExtension.lowercased()) {
+            let piece = JoinPiece(url: url)
+            pieces.append(piece)
+            load(piece.id)
+        }
+    }
+
+    private func load(_ id: UUID) {
+        guard let url = pieces.first(where: { $0.id == id })?.url else { return }
+        Task {
+            let info = await probe(url)
+            guard let i = pieces.firstIndex(where: { $0.id == id }) else { return }
+            pieces[i].info = info
+            pieces[i].loadFailed = info == nil
+        }
+    }
+
+    /// Adds another cut from the same file right after `id`.
+    func addCut(after id: UUID) {
+        guard let i = pieces.firstIndex(where: { $0.id == id }) else { return }
+        var piece = JoinPiece(url: pieces[i].url)
+        piece.info = pieces[i].info
+        piece.whole = false
+        pieces.insert(piece, at: i + 1)
+        schedulePreview(piece.id)
+    }
+
+    func remove(_ id: UUID) {
+        pieces.removeAll { $0.id == id }
+        if matchPiece == id { matchPiece = nil }
+    }
+
+    /// Pieces whose files have been read, for format comparison.
+    private var readyMedia: [MediaPiece] {
+        pieces.compactMap { piece in
+            guard let info = piece.info, case .success(let r) = piece.range else { return nil }
+            return MediaPiece(url: piece.url, probe: info, start: r.lowerBound, end: r.upperBound)
+        }
+    }
+
+    /// True when the pieces differ in format, so they will be converted.
+    var formatsDiffer: Bool {
+        let infos = pieces.compactMap(\.info)
+        guard let first = infos.first else { return false }
+        return infos.contains { $0.joinSignature != first.joinSignature }
+    }
+
+    /// The piece automatic matching would choose.
+    var autoMatchPiece: JoinPiece? {
+        let ready = pieces.filter { piece in
+            guard piece.info != nil, case .success = piece.range else { return false }
+            return true
+        }
+        guard !ready.isEmpty else { return nil }
+        return ready[MediaTools.autoTarget(readyMedia)]
+    }
+
+    func move(_ id: UUID, by offset: Int) {
+        guard let i = pieces.firstIndex(where: { $0.id == id }) else { return }
+        let j = i + offset
+        guard pieces.indices.contains(j) else { return }
+        pieces.swapAt(i, j)
+    }
+
+    func move(fromOffsets: IndexSet, toOffset: Int) {
+        pieces.move(fromOffsets: fromOffsets, toOffset: toOffset)
+    }
+
+    func update(_ id: UUID, whole: Bool? = nil, fields: RangeFields? = nil) {
+        guard let i = pieces.firstIndex(where: { $0.id == id }) else { return }
+        if let whole { pieces[i].whole = whole }
+        if let fields { pieces[i].fields = fields }
+        schedulePreview(id)
+    }
+
+    private func schedulePreview(_ id: UUID) {
+        previewTasks[id]?.cancel()
+        guard let piece = pieces.first(where: { $0.id == id }), !piece.whole,
+              let info = piece.info, case .success(let r) = piece.range else {
+            if let i = pieces.firstIndex(where: { $0.id == id }) { pieces[i].preview = RangePreview() }
+            return
+        }
+        previewTasks[id] = Task {
+            try? await Task.sleep(nanoseconds: 450_000_000)
+            guard !Task.isCancelled else { return }
+            let p = await previews(piece.url, probe: info, range: r)
+            if !Task.isCancelled, let i = pieces.firstIndex(where: { $0.id == id }) { pieces[i].preview = p }
+        }
+    }
+
+    var problem: String? {
+        if pieces.isEmpty { return "Add at least one video." }
+        for (n, piece) in pieces.enumerated() {
+            if case .failure(let message) = piece.range { return "Piece \(n + 1): \(message)" }
+        }
+        if pieces.count == 1 && pieces[0].whole { return "Add another video or a cut to join." }
+        return nil
+    }
+
+    var totalDuration: Double {
+        pieces.reduce(0) { total, piece in
+            if case .success(let r) = piece.range { return total + r.upperBound - r.lowerBound }
+            return total
+        }
+    }
+
+    func run() {
+        guard problem == nil else { return }
+        let media: [MediaPiece] = pieces.compactMap { piece in
+            guard let info = piece.info, case .success(let r) = piece.range else { return nil }
+            return MediaPiece(url: piece.url, probe: info, start: r.lowerBound, end: r.upperBound)
+        }
+        let first = media[0].url
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH.mm"
+        let out = Self.uniqueURL(in: first.deletingLastPathComponent(),
+                                 base: "Joined \(formatter.string(from: Date()))",
+                                 ext: first.pathExtension.isEmpty ? "mkv" : first.pathExtension)
+        let target = matchPiece.flatMap { id in pieces.firstIndex { $0.id == id } }
+        start("Joining \(media.count) pieces (\(TimeCode.format(totalDuration)))") { tools in
+            try await tools.render(media, to: out, target: target)
+            return [out]
+        }
+    }
+}

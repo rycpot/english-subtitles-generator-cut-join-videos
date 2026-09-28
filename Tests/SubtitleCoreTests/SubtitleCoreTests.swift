@@ -283,3 +283,161 @@ final class SubtitleBuilderTests: XCTestCase {
     }
 }
 
+
+final class EnglishCleaningTests: XCTestCase {
+    func testForeignRatio() {
+        XCTAssertEqual(SubtitleBuilder.foreignRatio("Hello there"), 0)
+        XCTAssertEqual(SubtitleBuilder.foreignRatio("真是太可惜了"), 1)
+        XCTAssertEqual(SubtitleBuilder.foreignRatio("Café déjà vu"), 0, "accented Latin is English-compatible")
+    }
+
+    func testKeepsEnglishPartOfMixedLines() {
+        XCTAssertEqual(SubtitleBuilder.englishOnly("女兒 Your daughter"), "Your daughter")
+        XCTAssertEqual(SubtitleBuilder.englishOnly("明天見到你。 I'll be there."), "I'll be there.")
+        XCTAssertEqual(SubtitleBuilder.englishOnly("《WHY DID I KILL OH EUN-AH?》"), "WHY DID I KILL OH EUN-AH?")
+    }
+
+    func testCollapsesSelfRepeatingLines() {
+        XCTAssertEqual(SubtitleBuilder.englishOnly("宗吾, tell the professor. 宗吾, tell the professor."), "tell the professor.")
+        XCTAssertEqual(SubtitleBuilder.englishOnly("I'm sorry. I'm sorry. I'm the one."), "I'm sorry. I'm sorry. I'm the one.")
+    }
+
+    func testDropsForeignOnlyJunkAndFiller() {
+        func text(_ t: String) -> String? { SubtitleBuilder.subtitleText(GroqSegment(start: 0, end: 1, text: t)) }
+        XCTAssertNil(text("行きましょう。"))
+        XCTAssertNil(text("Hello everyone, welcome to my channel."))
+        XCTAssertNil(text("《The"))
+        XCTAssertNil(text("Welcome"))
+        XCTAssertNil(text("I"))
+        XCTAssertEqual(text("Let's go."), "Let's go.")
+        XCTAssertEqual(text("No."), "No.")
+    }
+}
+
+final class TimeCodeTests: XCTestCase {
+    func testParse() {
+        XCTAssertEqual(TimeCode.parse("00:20:00"), 1200)
+        XCTAssertEqual(TimeCode.parse("20:00"), 1200)
+        XCTAssertEqual(TimeCode.parse("95"), 95)
+        XCTAssertEqual(TimeCode.parse("1:02:03.5"), 3723.5)
+        XCTAssertEqual(TimeCode.parse(" 00:00:30,250 "), 30.25)
+        XCTAssertNil(TimeCode.parse("00:61:00"))
+        XCTAssertNil(TimeCode.parse("1e3"))
+        XCTAssertNil(TimeCode.parse("1.5:00"))
+        XCTAssertNil(TimeCode.parse(""))
+        XCTAssertNil(TimeCode.parse("1:2:3:4"))
+    }
+
+    func testFormat() {
+        XCTAssertEqual(TimeCode.format(1320), "00:22:00")
+        XCTAssertEqual(TimeCode.format(3723.5), "01:02:03.500")
+        XCTAssertEqual(TimeCode.fileSafe(1200), "00.20.00")
+    }
+
+    func testSplitIntoCount() {
+        let parts = RangeSplitter.split(start: 1200, end: 1320, mode: .count(4))
+        XCTAssertEqual(parts.map(\.start), [1200, 1230, 1260, 1290])
+        XCTAssertEqual(parts.last?.end, 1320)
+    }
+
+    func testSplitIntoLengthWithShorterLastPart() {
+        let parts = RangeSplitter.split(start: 0, end: 100, mode: .length(30))
+        XCTAssertEqual(parts.map(\.end), [30, 60, 90, 100])
+    }
+
+    func testRangeFields() {
+        XCTAssertEqual(try RangeFields(start: "00:20:00", endMode: .duration, end: "00:02:00").resolve(fileDuration: 7200).get(), 1200...1320)
+        XCTAssertEqual(try RangeFields(start: "00:20:00", endMode: .endTime, end: "00:22:00").resolve(fileDuration: nil).get(), 1200...1320)
+        XCTAssertEqual(RangeFields(start: "00:22:00", endMode: .endTime, end: "00:20:00").resolve(fileDuration: nil), .failure(.notAfterStart))
+        XCTAssertEqual(RangeFields(start: "00:59:00", endMode: .duration, end: "00:02:00").resolve(fileDuration: 3600), .failure(.endPastEnd(3600)))
+        XCTAssertEqual(try RangeFields(start: "00:59:00", endMode: .endTime, end: "01:00:00.3").resolve(fileDuration: 3600).get(), 3540...3600)
+        XCTAssertEqual(RangeFields(start: "abc").resolve(fileDuration: nil), .failure(.badStart))
+    }
+}
+
+final class CutPlannerTests: XCTestCase {
+    // Keyframes every 2 s at x.023 with a 0.08 s decode delay, like the test film.
+    let keys = stride(from: 0.023, to: 120, by: 2).map { Keyframe(pts: $0, dts: $0 - 0.08) }
+    let fd = 0.04
+
+    func testParsesKeyframesAndEstimatesMissingDTS() {
+        let csv = "0.023000,N/A,K__\n0.183000,N/A,___\n2.023000,1.943000,K__,\n2.063000,1.983000,___\n"
+        let k = CutPlanner.parseKeyframes(csv)
+        XCTAssertEqual(k.count, 2)
+        XCTAssertEqual(k[0].dts, 0.023 - 0.08, accuracy: 1e-9)
+        XCTAssertEqual(k[1], Keyframe(pts: 2.023, dts: 1.943))
+    }
+
+    func testCopiesBetweenKeyframesAndEncodesEdges() {
+        let p = CutPlanner.plan(start: 20.5, end: 32.7, keyframes: keys, frameDuration: fd, firstKeyframe: 0.023, reachesFileEnd: false)
+        let k1 = keys[11], k2 = keys[16]   // 22.023 and 32.023
+        XCTAssertEqual(p.count, 3)
+        XCTAssertEqual(p[0], .encode(start: 20.5, end: k1.pts))
+        XCTAssertEqual(p[1], .copy(start: k1.pts, end: k2.pts, fromDTS: k1.dts, toDTS: k2.dts))
+        XCTAssertEqual(p[2], .encode(start: k2.pts, end: 32.7))
+    }
+
+    func testNoHeadWhenLessThanAFrameBeforeKeyframe() {
+        let p = CutPlanner.plan(start: 22.0, end: 30.0, keyframes: keys, frameDuration: fd, firstKeyframe: 0.023, reachesFileEnd: false)
+        XCTAssertTrue(p[0].isCopy, "22.0 is less than a frame before the keyframe at 22.023")
+        XCTAssertEqual(p[0].start, keys[11].pts)
+    }
+
+    func testShortCutInsideOneGroupIsEncoded() {
+        XCTAssertEqual(CutPlanner.plan(start: 20.2, end: 21.5, keyframes: keys, frameDuration: fd, firstKeyframe: 0.023, reachesFileEnd: false),
+                       [.encode(start: 20.2, end: 21.5)])
+    }
+
+    func testFromFileStartNeedsNoStartTrimAndToEndIsCopied() {
+        let p = CutPlanner.plan(start: 0, end: 120, keyframes: keys, frameDuration: fd, firstKeyframe: 0.023, reachesFileEnd: true)
+        XCTAssertEqual(p, [.copy(start: keys[0].pts, end: 120, fromDTS: nil, toDTS: nil)])
+    }
+
+    func testChaptersFollowPieces() {
+        let ch = [ChapterInfo(start: 0, end: 600, title: "One"), ChapterInfo(start: 600, end: 1200, title: "Two")]
+        let out = ChapterPlanner.chapters(for: [(ch, 500, 700), (ch, 0, 100)])
+        XCTAssertEqual(out, [ChapterInfo(start: 0, end: 100, title: "One"), ChapterInfo(start: 100, end: 200, title: "Two"),
+                             ChapterInfo(start: 200, end: 300, title: "One")])
+        let meta = ChapterPlanner.ffmetadata(tags: ["title": "A=B"], chapters: [out[0]])
+        XCTAssertTrue(meta.hasPrefix(";FFMETADATA1\ntitle=A\\=B\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=0\nEND=100000\ntitle=One\n"))
+    }
+
+    func testProbeDecodingAndSignature() throws {
+        let json = """
+        {"streams":[{"index":0,"codec_name":"h264","codec_type":"video","width":640,"height":360,"pix_fmt":"yuv420p",
+          "r_frame_rate":"24000/1001","avg_frame_rate":"24000/1001","disposition":{"attached_pic":0}},
+          {"index":1,"codec_name":"aac","codec_type":"audio","sample_rate":"48000","channels":2,"tags":{"language":"kor"}},
+          {"index":2,"codec_name":"mjpeg","codec_type":"video","disposition":{"attached_pic":1}}],
+         "format":{"start_time":"-0.023000","duration":"90.000000","tags":{"title":"Film"}},
+         "chapters":[{"start_time":"0.000000","end_time":"60.000000","tags":{"title":"Intro"}}]}
+        """
+        let p = try ProbeResult.decode(Data(json.utf8))
+        XCTAssertEqual(p.video?.index, 0, "cover art is not the main video")
+        XCTAssertEqual(p.startTime, -0.023)
+        XCTAssertEqual(p.frameDuration, 1001.0 / 24000, accuracy: 1e-9)
+        XCTAssertTrue(p.canSmartCut)
+        XCTAssertEqual(p.chapterList.first?.title, "Intro")
+        var other = p
+        other.streams[0].width = 1280
+        XCTAssertNotEqual(p.joinSignature, other.joinSignature)
+        XCTAssertEqual(p.joinSignature.differences(from: other.joinSignature), ["video size 1280x360 vs 640x360"])
+    }
+}
+
+final class JoinPlannerTests: XCTestCase {
+    let hd = JoinSignature(video: ["h264", "1920x1080", "yuv420p", "24000/1001", "1:1"], audio: [], subtitles: [])
+    let phone = JoinSignature(video: ["h264", "1280x720", "yuv420p", "30/1", "1:1"], audio: [], subtitles: [])
+
+    func testPicksFormatWithMostRunningTime() {
+        let pieces: [(signature: JoinSignature, duration: Double, pixels: Int)] =
+            [(phone, 20.0, 1280 * 720), (hd, 5400.0, 1920 * 1080), (phone, 20.0, 1280 * 720)]
+        XCTAssertEqual(JoinPlanner.bestTarget(pieces), 1)
+        let phoneHeavy: [(signature: JoinSignature, duration: Double, pixels: Int)] =
+            [(hd, 60.0, 1920 * 1080), (phone, 50.0, 1280 * 720), (phone, 50.0, 1280 * 720)]
+        XCTAssertEqual(JoinPlanner.bestTarget(phoneHeavy), 1, "the first piece of the dominant format")
+    }
+
+    func testTieGoesToHigherResolution() {
+        XCTAssertEqual(JoinPlanner.bestTarget([(phone, 60, 1280 * 720), (hd, 60, 1920 * 1080)]), 1)
+    }
+}

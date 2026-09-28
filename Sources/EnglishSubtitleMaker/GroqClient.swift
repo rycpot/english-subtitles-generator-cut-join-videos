@@ -47,8 +47,31 @@ struct GroqClient {
 
     // MARK: Audio
 
+    /// Whether Groq accepts `language=en` on translations (nil = not tried yet).
+    /// It asks Whisper to answer in English, which reduces replies in other languages.
+    private static let languageSupport = LanguageSupport()
+
     /// Whisper hears one audio part and writes English. Returns verbose_json.
     func translateAudio(file: URL, mimeType: String, model: String, prompt: String?) async throws -> Data {
+        let sendLanguage = Self.languageSupport.value != false
+        do {
+            let data = try await translateAudio(file: file, mimeType: mimeType, model: model, prompt: prompt,
+                                                language: sendLanguage ? "en" : nil)
+            if sendLanguage, Self.languageSupport.value == nil {
+                Self.languageSupport.value = true
+                log(.detail, "Groq accepted language=en for translation.")
+            }
+            return data
+        } catch let error as SubtitleError where sendLanguage && error.code == .badRequest
+            && error.detail.lowercased().contains("language") {
+            Self.languageSupport.value = false
+            log(.detail, "Groq does not accept language=en for translation (\(error.detail)); continuing without it.")
+            return try await translateAudio(file: file, mimeType: mimeType, model: model, prompt: prompt, language: nil)
+        }
+    }
+
+    private func translateAudio(file: URL, mimeType: String, model: String, prompt: String?,
+                                language: String?) async throws -> Data {
         let audio: Data
         do {
             audio = try Data(contentsOf: file)
@@ -64,6 +87,7 @@ struct GroqClient {
         form.addField("response_format", "verbose_json")
         form.addField("temperature", "0")
         if let prompt, !prompt.isEmpty { form.addField("prompt", prompt) }
+        if let language { form.addField("language", language) }
         form.addFile("file", filename: file.lastPathComponent, mimeType: mimeType, data: audio)
 
         var req = URLRequest(url: Groq.translationsURL)
@@ -167,5 +191,15 @@ struct GroqClient {
                 sinceLog = 0
             }
         }
+    }
+}
+
+/// A thread-safe flag shared by all requests in this app session.
+private final class LanguageSupport {
+    private let lock = NSLock()
+    private var stored: Bool?
+    var value: Bool? {
+        get { lock.lock(); defer { lock.unlock() }; return stored }
+        set { lock.lock(); stored = newValue; lock.unlock() }
     }
 }

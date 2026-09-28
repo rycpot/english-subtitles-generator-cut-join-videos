@@ -32,6 +32,12 @@ public enum SubtitleBuilder {
         "thanks for watching", "thank you for watching", "please subscribe", "like and subscribe",
         "subscribe to", "amara.org", "subtitles by", "subtitled by", "transcribed by",
         "translated by", "captions by", "www.", ".com",
+        "welcome to my channel", "hello everyone, welcome", "don't forget to subscribe",
+    ]
+
+    /// Whole lines Whisper produces over music or noise that are never real dialogue.
+    static let junkLines: Set<String> = [
+        "i", "a", "an", "the", "of", "of the", "to", "and", "can", "time", "welcome", "bgm", "music",
     ]
 
     public static func isLikelyHallucination(_ s: GroqSegment) -> Bool {
@@ -53,6 +59,69 @@ public enum SubtitleBuilder {
             .trimmingCharacters(in: CharacterSet(charactersIn: ". "))
     }
 
+    /// A letter from a script English subtitles never use (Chinese, Japanese,
+    /// Korean, Indic, Arabic, Cyrillic, Thai...). Latin with accents is fine.
+    static func isForeign(_ scalar: Unicode.Scalar) -> Bool {
+        guard scalar.properties.isAlphabetic else { return false }
+        let v = scalar.value
+        return v > 0x024F && !(0x1E00...0x1EFF).contains(v)
+    }
+
+    /// Share of letters that are in a non-Latin script (0 = all English).
+    public static func foreignRatio(_ text: String) -> Double {
+        var foreign = 0, letters = 0
+        for scalar in text.unicodeScalars where scalar.properties.isAlphabetic {
+            letters += 1
+            if isForeign(scalar) { foreign += 1 }
+        }
+        return letters == 0 ? 0 : Double(foreign) / Double(letters)
+    }
+
+    static let foreignPunctuation = CharacterSet(charactersIn: "《》「」『』【】〈〉・ー、。，？！：；（）～…")
+
+    /// Keeps only the English part of a line: removes words in other scripts and
+    /// East Asian brackets, and collapses a line that repeats itself.
+    public static func englishOnly(_ text: String) -> String {
+        var out = String.UnicodeScalarView()
+        for scalar in text.unicodeScalars {
+            if isForeign(scalar) || foreignPunctuation.contains(scalar) {
+                out.append(" ")
+            } else {
+                out.append(scalar)
+            }
+        }
+        var result = cleaned(String(out))
+        for (bad, good) in [(" ,", ","), (" .", "."), (" ?", "?"), (" !", "!"), (".,", "."), ("?,", "?"), ("!,", "!")] {
+            result = result.replacingOccurrences(of: bad, with: good)
+        }
+        let edges = CharacterSet(charactersIn: " ,;:-")
+        return collapseRepeats(result.trimmingCharacters(in: edges)).trimmingCharacters(in: edges)
+    }
+
+    /// "Tell the professor. Tell the professor." → "Tell the professor."
+    static func collapseRepeats(_ text: String) -> String {
+        let words = text.split(separator: " ").map(String.init)
+        guard words.count >= 2 else { return text }
+        let key = words.map { $0.lowercased().trimmingCharacters(in: .punctuationCharacters) }
+        for n in 1...(words.count / 2) where words.count % n == 0 {
+            let first = Array(key[0..<n])
+            if stride(from: n, to: words.count, by: n).allSatisfy({ Array(key[$0..<$0 + n]) == first }) {
+                return words[0..<n].joined(separator: " ")
+            }
+        }
+        return text
+    }
+
+    /// The text a segment contributes to the subtitles, or nil if it should be left out.
+    public static func subtitleText(_ segment: GroqSegment) -> String? {
+        guard !isLikelyHallucination(segment) else { return nil }
+        let text = englishOnly(cleaned(segment.text))
+        let letters = text.unicodeScalars.filter { $0.properties.isAlphabetic }.count
+        guard letters >= 2, !junkLines.contains(normalized(text)) else { return nil }
+        if hallucinationPatterns.contains(where: { normalized(text).contains($0) }) { return nil }
+        return text
+    }
+
     public static func cleaned(_ text: String) -> String {
         text.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.joined(separator: " ")
     }
@@ -60,8 +129,8 @@ public enum SubtitleBuilder {
     public static func buildCues(from chunks: [ChunkResult]) -> [Cue] {
         var cues: [Cue] = []
         for chunk in chunks {
-            for seg in chunk.segments where !isLikelyHallucination(seg) {
-                let text = cleaned(seg.text)
+            for seg in chunk.segments {
+                guard let text = subtitleText(seg) else { continue }
                 let start = chunk.offset + min(max(0, seg.start), chunk.length)
                 var end = chunk.offset + min(max(0, seg.end), chunk.length)
                 if end <= start { end = start + 1.5 }

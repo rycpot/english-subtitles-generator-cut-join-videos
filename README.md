@@ -14,7 +14,8 @@ The speech recognition and translation run on [Groq](https://groq.com)'s free Wh
 2. **Extract the audio** as mono, 16 kHz MP3 (what Whisper uses internally). On 5.1/7.1 tracks it keeps only the centre channel, where film dialogue is mixed, which cuts out music and effects.
 3. **Split the audio into parts of 30 seconds or less**, cut at the quietest moment between phrases (measured every 0.1 s, so it works even over background music). Whisper listens in 30-second windows. On longer files it uses its own guessed timestamps to decide where the next window starts, and when translating (especially Telugu, Tamil and similar languages) those guesses go wrong: speech is skipped and subtitles drift out of sync after the first 30 seconds. One window per part avoids that. Silent parts are not uploaded at all.
 4. **Upload each part** to Groq's `/audio/translations` endpoint. Whisper transcribes and translates to English in one step and returns the text with timestamps.
-5. **Build the SRT.** It shifts timestamps to film time, removes known Whisper "hallucinations" (such as "Thanks for watching!" over music), merges repeats, splits long lines (max 2 lines × 42 characters), and caps how long a short line stays on screen.
+5. **Keep it English.** If a part comes back mostly in another language (Whisper sometimes mistakes the language of a short part, e.g. Korean for Chinese or Japanese), it is asked again once with an English-only hint. Leftover non-English words are removed from mixed lines, lines that repeat themselves are collapsed, and common filler ("Welcome to my channel") is dropped. Requests also ask Groq for English output (`language=en`) if Groq accepts it.
+6. **Build the SRT.** It shifts timestamps to film time, removes known Whisper "hallucinations" (such as "Thanks for watching!" over music), merges repeats, splits long lines (max 2 lines × 42 characters), and caps how long a short line stays on screen.
 
 Finished parts are remembered, so if a job is interrupted (daily limit, Wi-Fi drop, quitting the app), drop the same file again and it continues where it stopped.
 
@@ -29,6 +30,21 @@ As published by Groq when this was written; they may change:
 | File size | 25 MB | The app's parts are under 0.3 MB. |
 | Requests per minute | 20 | The app sends at most one request every 3.1 s to stay under this; it sets the ~15 min per 2-hour film. |
 | Requests per day | 2,000 | About 250 requests per 2-hour film, so the audio limit above is reached first. |
+
+## Cutter and Joiner
+
+Two more tabs use the bundled ffmpeg to cut and join videos **without changing their quality**.
+
+**Cutter:** drop a video, type a start time and either an end time or a length ("from 00:20:00, 00:02:00 long"). Stills of the first and last frame show exactly what you will get. Optionally split the cut **into N equal parts** or **into parts of a fixed length** (the last part may be shorter). Results are saved next to the original, e.g. `Movie [00.20.00–00.22.00].mkv` or `Movie [00.20.00–00.22.00] part 1 of 4.mkv`.
+
+**Joiner:** drop one or more videos. Each piece is either the **whole file** or a **cut** of it; the ⧉ button adds another cut from the same file. Reorder pieces by dragging or with the arrows; they are joined in the order shown into `Joined <date> <time>.<ext>` next to the first file.
+
+**How the quality is kept (smart cut):** a video can only be cut cleanly at keyframes (every few seconds). For H.264 videos the app copies everything between the first and last keyframe of each piece **bit for bit**, and re-encodes only the few frames before the first and after the last keyframe at very high quality. Cuts are exact to the frame, and more than 95% of the video is usually untouched. Audio and subtitle tracks are copied unchanged (all of them, with their languages), and chapters and the title are kept and adjusted.
+
+- Other codecs (e.g. HEVC/H.265): the cut video is re-encoded at high quality with the same codec; audio and subtitles are still copied. This is slower (roughly real time or longer on an older Mac).
+- Joining videos of **different formats** (size, frame rate, codec): they must be converted to one format. By default the app picks the format that makes up **most of the running time**, so the least video is converted; a "Match" menu lets you choose another. Converted joins keep the first audio track only and leave out subtitles.
+- After a smart cut, the app decodes the frames around every join to check them; if anything is wrong it redoes the job with full re-encoding automatically.
+- Temporary files need about as much free space as the result.
 
 ## Long films
 
@@ -89,6 +105,10 @@ The full log is also written to `~/Library/Logs/EnglishSubtitleMaker/EnglishSubt
 | E209 | Unexpected reply | Try again; report it with the log if it repeats. |
 | E301 | Can't save the .srt | The folder is read-only or macOS blocked access. |
 | E302 | No speech found | Check the log to see which audio track was used. |
+| E401 | ffprobe not found | Re-download the app (ffprobe is inside it). |
+| E402 | Cannot read the video | The file may be damaged or has no video track. |
+| E403 | Cutting failed | See the ffmpeg lines in the log; check free disk space. |
+| E404 | Joining failed | See the ffmpeg lines in the log; check free disk space. |
 | E900 | Cancelled | You stopped the job. Finished parts are kept. |
 | E999 | Unexpected error | Please report it with the log. |
 

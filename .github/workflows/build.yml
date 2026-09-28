@@ -37,12 +37,16 @@ jobs:
           unzip -o ffmpeg.zip -d ffmpeg-bin
           file ffmpeg-bin/ffmpeg
           arch -x86_64 ffmpeg-bin/ffmpeg -hide_banner -version | head -1
-          arch -x86_64 ffmpeg-bin/ffmpeg -hide_banner -encoders | grep -E "libmp3lame|flac"
+          arch -x86_64 ffmpeg-bin/ffmpeg -hide_banner -encoders | grep -E "libmp3lame|flac|libx264|libx265"
+          curl -fsSL --retry 3 -o ffprobe.zip "https://evermeet.cx/ffmpeg/getrelease/ffprobe/zip"
+          unzip -o ffprobe.zip -d ffmpeg-bin
+          arch -x86_64 ffmpeg-bin/ffprobe -hide_banner -version | head -1
 
       - name: Build app
         env:
           ARCH: x86_64
           FFMPEG_BIN: ffmpeg-bin/ffmpeg
+          FFPROBE_BIN: ffmpeg-bin/ffprobe
           VERSION: ${{ inputs.release_version || (startsWith(github.ref, 'refs/tags/v') && github.ref_name) || '1.0.0' }}
           BUILD_NUMBER: ${{ github.run_number }}
         run: |
@@ -104,6 +108,29 @@ jobs:
           head -c 1000 /dev/urandom > "$RUNNER_TEMP/junk.mkv"
           if arch -x86_64 "$BIN" --selftest "$RUNNER_TEMP/junk.mkv" | tee junk.log; then exit 1; fi
           grep -q "E102" junk.log
+
+      - name: Self-test the Cutter and Joiner (frame-exact cuts, splits, joins)
+        run: |
+          set -o pipefail
+          APP="dist/English Subtitle Maker.app"
+          FF="$APP/Contents/Resources/ffmpeg"
+          T="$RUNNER_TEMP/tools"
+          mkdir -p "$T"
+          printf "1\n00:00:21,000 --> 00:00:23,000\nHello\n\n2\n00:00:40,000 --> 00:00:42,000\nWorld\n" > "$T/s.srt"
+          # Two matching films (H.264 with B-frames, keyframe every 2 s, 2 audio tracks + subtitles)
+          # and a clip in a different format.
+          for spec in "src:testsrc2:120" "src2:testsrc:60"; do
+            IFS=: read name pattern dur <<< "$spec"
+            arch -x86_64 "$FF" -hide_banner -loglevel error -y \
+              -f lavfi -i "$pattern=s=640x360:r=25:d=$dur" -f lavfi -i "sine=f=440:d=$dur" -f lavfi -i "sine=f=880:d=$dur" \
+              -i "$T/s.srt" -map 0:v -map 1:a -map 2:a -map 3 \
+              -c:v libx264 -preset veryfast -g 50 -bf 3 -pix_fmt yuv420p -c:a aac -b:a 128k -c:s srt \
+              -metadata:s:a:0 language=kor -metadata:s:a:1 language=eng -metadata:s:s:0 language=eng "$T/$name.mkv"
+          done
+          arch -x86_64 "$FF" -hide_banner -loglevel error -y -f lavfi -i "testsrc2=s=1280x720:r=30:d=20" \
+            -f lavfi -i "sine=f=700:r=48000:d=20" -c:v libx264 -preset veryfast -pix_fmt yuv420p -c:a aac -ac 1 "$T/other720.mp4"
+          arch -x86_64 "$APP/Contents/MacOS/EnglishSubtitleMaker" --selftest-tools "$T" | tee tools.log
+          grep -q "^TOOLS OK$" tools.log
 
       - uses: actions/upload-artifact@v4
         with:
