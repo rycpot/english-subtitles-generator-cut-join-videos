@@ -118,6 +118,16 @@ The full log is also written to `~/Library/Logs/EnglishSubtitleMaker/EnglishSubt
 
 - Whisper large-v3 translates **European languages** (Spanish, French, German, Italian, Portuguese, Dutch, Polish, …) very well.
 - **Hindi, Urdu and Bengali** come out decent. **Tamil, Telugu, Malayalam, Kannada and Marathi** are weaker: expect the gist rather than polished dialogue.
+- **East Asian languages:**
+  - **Japanese and Mandarin Chinese** are among Whisper's stronger languages and usually give good, followable subtitles.
+  - **Korean** is also good, but on short parts Whisper sometimes mistakes it for Japanese or Chinese and answers in that language. The app detects this and asks again, then removes any foreign text left over, so expect the odd missing line rather than wrong-language lines.
+  - **Cantonese** is weaker: it is often treated as Mandarin, so expect the gist.
+- **Southeast Asian languages:**
+  - **Indonesian and Malay** (Latin script, close to each other) come out well.
+  - **Vietnamese** is decent.
+  - **Thai and Tagalog/Filipino** are usable but weaker.
+  - **Burmese, Khmer and Lao** are among Whisper's weakest languages: expect frequent gaps and rough meaning.
+- These are general observations about Whisper large-v3 rather than measurements from this app; accents, audio quality and dialect make a big difference. The log lists each part's English lines, so you can see where a film has gaps.
 - Songs, heavy background music and overlapping speech reduce accuracy.
 - Subtitle timing follows Whisper's segments. It's usually within half a second, but occasionally a line appears a little early. Use VLC's subtitle delay (**G** / **H** keys) to nudge it.
 
