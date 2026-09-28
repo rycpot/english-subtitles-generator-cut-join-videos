@@ -13,7 +13,7 @@ public struct RangeFields: Equatable {
     public var endMode: EndMode
     public var end: String
 
-    public init(start: String = "00:00:00", endMode: EndMode = .duration, end: String = "00:01:00") {
+    public init(start: String = "00:00:00", endMode: EndMode = .duration, end: String = "00:00:00") {
         self.start = start
         self.endMode = endMode
         self.end = end
@@ -26,6 +26,8 @@ public struct RangeFields: Equatable {
         guard let value = TimeCode.parse(end) else {
             return .failure(endMode == .endTime ? .badEnd : .badDuration)
         }
+        // All zeros is the untouched default: not an error yet, just not picked.
+        if value == 0 { return .failure(endMode == .endTime ? .noEnd : .noDuration) }
         var e = endMode == .endTime ? value : s + value
         guard e - s >= 0.1 else { return .failure(.notAfterStart) }
         if let d = fileDuration, d > 0 {
@@ -39,6 +41,8 @@ public struct RangeFields: Equatable {
 
 public enum RangeError: Error, Equatable, CustomStringConvertible {
     case badStart, badEnd, badDuration, notAfterStart
+    /// End or length still at 00:00:00: nothing chosen yet.
+    case noEnd, noDuration
     case startPastEnd(Double)
     case endPastEnd(Double)
 
@@ -48,6 +52,8 @@ public enum RangeError: Error, Equatable, CustomStringConvertible {
         case .badEnd: return "End time isn't valid. Use hh:mm:ss, for example 00:22:00."
         case .badDuration: return "Duration isn't valid. Use hh:mm:ss, for example 00:02:00."
         case .notAfterStart: return "The end must be after the start."
+        case .noEnd: return "Pick an end time, or click To end."
+        case .noDuration: return "Pick a length, or click one of the presets."
         case .startPastEnd(let d): return "Starts after the video ends (it is \(TimeCode.format(d)) long)."
         case .endPastEnd(let d): return "Ends after the video ends (it is \(TimeCode.format(d)) long)."
         }

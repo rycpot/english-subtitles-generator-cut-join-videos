@@ -182,17 +182,33 @@ struct RangeEditor: View {
     var body: some View {
         let result = fields.resolve(fileDuration: fileDuration)
         VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .bottom, spacing: 14) {
+            HStack(alignment: .top, spacing: 14) {
                 TimeDropdowns(label: "Start", text: $fields.start, limit: startLimit,
                               frameDuration: frameDuration, invalid: result.isBadStart)
-                Picker("", selection: $fields.endMode) {
+                Picker("", selection: Binding(get: { fields.endMode }, set: { mode in
+                    // The number means something else in the other mode, so start again from zero.
+                    guard mode != fields.endMode else { return }
+                    fields.endMode = mode
+                    fields.end = "00:00:00"
+                })) {
                     ForEach(EndMode.allCases) { Text($0.rawValue).tag($0) }
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
                 .frame(width: 180)
-                TimeDropdowns(label: fields.endMode == .endTime ? "End" : "Length", text: $fields.end,
-                              limit: endLimit, frameDuration: frameDuration, invalid: result.isBadEnd)
+                .padding(.top, 15)
+                VStack(alignment: .leading, spacing: 6) {
+                    TimeDropdowns(label: fields.endMode == .endTime ? "End" : "Length", text: $fields.end,
+                                  limit: endLimit, frameDuration: frameDuration, invalid: result.isBadEnd)
+                    if fields.endMode == .duration { presetChips }
+                }
+                if fields.endMode == .endTime {
+                    Button("To end") { fields.end = TimeCode.format(videoLength) }
+                        .buttonStyle(.pillSmall)
+                        .disabled((fileDuration ?? 0) <= 0)
+                        .help("End at the last frame of the video")
+                        .padding(.top, 17)
+                }
                 Spacer()
             }
             switch result {
@@ -203,7 +219,7 @@ struct RangeEditor: View {
             case .failure(let error):
                 Text(error.description)
                     .font(.system(size: 11))
-                    .foregroundColor(Theme.error)
+                    .foregroundColor(error == .noEnd || error == .noDuration ? Theme.textFaint : Theme.error)
             }
             if preview.start != nil || preview.end != nil {
                 HStack(spacing: 10) {
@@ -216,7 +232,30 @@ struct RangeEditor: View {
 }
 
 extension RangeEditor {
-    private var videoLength: Double { (fileDuration ?? 0) > 0 ? fileDuration! : 100 * 3600 - 1 }
+    struct Preset: Hashable {
+        let label: String
+        let seconds: Double
+    }
+
+    static let presets: [Preset] = [("5s", 5), ("10s", 10), ("15s", 15), ("20s", 20), ("30s", 30),
+                                    ("1m", 60), ("2m", 120), ("3m", 180), ("4m", 240), ("5m", 300)]
+        .map { Preset(label: $0.0, seconds: $0.1) }
+
+    /// Tiny length presets under the Length field; ones longer than what is
+    /// left of the video after the start are disabled.
+    fileprivate var presetChips: some View {
+        let current = TimeCode.parse(fields.end)
+        return HStack(spacing: 4) {
+            ForEach(Self.presets, id: \.self) { preset in
+                let selected = current.map { abs($0 - preset.seconds) < 0.001 } ?? false
+                Button(preset.label) { fields.end = TimeCode.format(preset.seconds) }
+                    .buttonStyle(ChipStyle(selected: selected))
+                    .disabled(preset.seconds > endLimit + 0.001)
+            }
+        }
+    }
+
+    fileprivate var videoLength: Double { (fileDuration ?? 0) > 0 ? fileDuration! : 100 * 3600 - 1 }
     /// The last frame can still start a cut.
     fileprivate var startLimit: Double { max(0, videoLength - frameDuration) }
     fileprivate var endLimit: Double {

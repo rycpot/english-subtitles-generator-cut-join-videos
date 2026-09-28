@@ -101,3 +101,21 @@ struct ProgressBar: View {
         .frame(height: 6)
     }
 }
+
+/// A tiny rounded preset button ("5s", "1m").
+struct ChipStyle: ButtonStyle {
+    var selected = false
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 10, weight: .medium, design: .monospaced))
+            .padding(.horizontal, 7)
+            .padding(.vertical, 2)
+            .foregroundColor(selected ? Theme.onAccent : Theme.textSecondary)
+            .background(Capsule().fill(selected ? Theme.accent : (configuration.isPressed ? Theme.mint.opacity(0.25) : Theme.surface)))
+            .overlay(Capsule().stroke(selected ? Theme.accent : Theme.border, lineWidth: 1))
+            .opacity(isEnabled ? 1 : 0.35)
+            .contentShape(Capsule())
+    }
+}

@@ -126,7 +126,7 @@ enum SplitKind: String, CaseIterable, Identifiable {
 final class CutterModel: ToolModel {
     @Published var file: URL?
     @Published var info: ProbeResult?
-    @Published var fields = RangeFields(start: "00:00:00", endMode: .duration, end: "00:01:00") {
+    @Published var fields = RangeFields() {
         didSet { if fields != oldValue { schedulePreview() } }
     }
     @Published var splitKind: SplitKind = .none
@@ -234,7 +234,7 @@ struct JoinPiece: Identifiable {
     var modified: Date?
     var info: ProbeResult?
     var whole = true
-    var fields = RangeFields(start: "00:00:00", endMode: .duration, end: "00:01:00")
+    var fields = RangeFields()
     var preview = RangePreview()
     var loadFailed = false
 

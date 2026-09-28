@@ -352,6 +352,8 @@ final class TimeCodeTests: XCTestCase {
         XCTAssertEqual(RangeFields(start: "00:59:00", endMode: .duration, end: "00:02:00").resolve(fileDuration: 3600), .failure(.endPastEnd(3600)))
         XCTAssertEqual(try RangeFields(start: "00:59:00", endMode: .endTime, end: "01:00:00.3").resolve(fileDuration: 3600).get(), 3540...3600)
         XCTAssertEqual(RangeFields(start: "abc").resolve(fileDuration: nil), .failure(.badStart))
+        XCTAssertEqual(RangeFields().resolve(fileDuration: 60), .failure(.noDuration), "untouched default")
+        XCTAssertEqual(RangeFields(endMode: .endTime).resolve(fileDuration: 60), .failure(.noEnd))
     }
 }
 
