@@ -85,7 +85,7 @@ A 3-hour film is about 390 parts. The first 2 hours of audio go through at full 
 - The centre-channel "dialogue focus" option.
 - **Clear Saved Progress**, which deletes the remembered parts of unfinished jobs.
 
-The full log is also written to `~/Library/Logs/EnglishSubtitleMaker/EnglishSubtitleMaker.log` (**Open Log Folder** button).
+Each tab (Subtitles, Cutter, Joiner) has its own log at the bottom of the window, with **Copy Log** and **Clear Log** buttons (clearing only empties the window; the files are kept). The logs are also written to `~/Library/Logs/EnglishSubtitleMaker/` as `Subtitles.log`, `Cutter.log` and `Joiner.log` (**Open Log Folder** button).
 
 ## Error codes
 

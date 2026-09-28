@@ -8,8 +8,9 @@ Three tools for movies on your Mac: English subtitles for foreign-language films
 4. Paste your free Groq API key (from https://console.groq.com/keys) into the box at the top, then drop a movie on the window.
 
 **What's in this version**
-- **New name:** *English Subtitles Generator, Cut & Join Videos*, since the app now does all three. After installing, delete the old *English Subtitle Maker* app from Applications. Your Groq key and settings carry over.
+- **Separate logs:** the Subtitles, Cutter and Joiner tabs each have their own log (and log file), so switching tabs shows only that tool's messages.
+- **Clear Log** button next to Copy Log.
 
-Earlier: Cutter and Joiner tabs, smart cut, cleaner subtitles (v1.5.0); charcoal and green theme (v1.4.0); whisper-large-v3 only (v1.3.1); long films wait out Groq's hourly limit (v1.3.0); audio track picker (v1.1.0); 30-second parts for sync, `Movie.srt` naming (v1.0.0).
+Earlier: new name (v1.5.1); Cutter and Joiner tabs, smart cut, cleaner subtitles (v1.5.0); charcoal and green theme (v1.4.0); whisper-large-v3 only (v1.3.1); long films wait out Groq's hourly limit (v1.3.0); audio track picker (v1.1.0); 30-second parts for sync, `Movie.srt` naming (v1.0.0).
 
 See the README for details and error codes.

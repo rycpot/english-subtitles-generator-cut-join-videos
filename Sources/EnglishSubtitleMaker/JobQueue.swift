@@ -36,7 +36,8 @@ final class JobQueue: ObservableObject {
     static let shared = JobQueue()
 
     @Published var jobs: [Job] = []
-    @Published var log: [LogLine] = []
+    /// A separate log for each tab (Subtitles, Cutter, Joiner).
+    @Published private(set) var logs: [AppTab: [LogLine]] = [:]
     @Published var progress: Double = 0
     @Published var step: String = "Drop a video file to start."
     @Published private(set) var isRunning = false
@@ -56,15 +57,20 @@ final class JobQueue: ObservableObject {
         f.dateFormat = "HH:mm:ss"
         return f
     }()
-    private lazy var logFile: FileHandle? = {
+    private var logFiles: [AppTab: FileHandle] = [:]
+
+    /// ~/Library/Logs/EnglishSubtitleMaker/Subtitles.log, Cutter.log, Joiner.log
+    private func logFile(_ tab: AppTab) -> FileHandle? {
+        if let handle = logFiles[tab] { return handle }
         let fm = FileManager.default
         try? fm.createDirectory(at: AppPaths.logs, withIntermediateDirectories: true)
-        let url = AppPaths.logs.appendingPathComponent("EnglishSubtitleMaker.log")
+        let url = AppPaths.logs.appendingPathComponent("\(tab.rawValue).log")
         if !fm.fileExists(atPath: url.path) { fm.createFile(atPath: url.path, contents: nil) }
         let handle = try? FileHandle(forWritingTo: url)
         handle?.seekToEndOfFile()
+        logFiles[tab] = handle
         return handle
-    }()
+    }
 
     // MARK: Adding files
 
@@ -235,17 +241,28 @@ final class JobQueue: ObservableObject {
         if !step.isEmpty { self.step = step }
     }
 
-    func append(_ level: LogLevel, _ text: String) {
+    func append(_ level: LogLevel, _ text: String, to tab: AppTab = .subtitles) {
         let line = LogLine(time: Date(), level: level, text: text)
-        log.append(line)
-        if log.count > 2000 { log.removeFirst(log.count - 2000) }
+        var lines = logs[tab] ?? []
+        lines.append(line)
+        if lines.count > 2000 { lines.removeFirst(lines.count - 2000) }
+        logs[tab] = lines
         if let data = "\(timeFormatter.string(from: line.time)) \(text)\n".data(using: .utf8) {
-            logFile?.write(data)
+            logFile(tab)?.write(data)
         }
     }
 
-    func logText() -> String {
-        log.map { "\(timeFormatter.string(from: $0.time))  \($0.text)" }.joined(separator: "\n")
+    func lines(_ tab: AppTab) -> [LogLine] {
+        logs[tab] ?? []
+    }
+
+    func logText(_ tab: AppTab) -> String {
+        lines(tab).map { "\(timeFormatter.string(from: $0.time))  \($0.text)" }.joined(separator: "\n")
+    }
+
+    /// Clears the tab's log in the window (the log file on disk is kept).
+    func clearLog(_ tab: AppTab) {
+        logs[tab] = []
     }
 
     func formattedTime(_ date: Date) -> String {

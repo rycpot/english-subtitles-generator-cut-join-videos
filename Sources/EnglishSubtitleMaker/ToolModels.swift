@@ -15,19 +15,23 @@ class ToolModel: ObservableObject {
     @Published var progress: Double = 0
     @Published var status: String
     @Published var lastOutputs: [URL] = []
+    /// The tab whose log this tool writes to.
+    let channel: AppTab
     private var worker: Task<Void, Never>?
 
-    init(status: String) {
+    init(status: String, channel: AppTab) {
         self.status = status
+        self.channel = channel
     }
 
     func log(_ level: LogLevel, _ text: String) {
-        JobQueue.shared.append(level, text)
+        JobQueue.shared.append(level, text, to: channel)
     }
 
     func makeTools() throws -> MediaTools {
-        try MediaTools.make(
-            log: { level, text in Task { @MainActor in JobQueue.shared.append(level, text) } },
+        let channel = self.channel
+        return try MediaTools.make(
+            log: { level, text in Task { @MainActor in JobQueue.shared.append(level, text, to: channel) } },
             progress: { [weak self] value, step in
                 Task { @MainActor in
                     guard let self, self.isRunning else { return }
@@ -132,7 +136,7 @@ final class CutterModel: ToolModel {
     private var previewTask: Task<Void, Never>?
 
     init() {
-        super.init(status: "Drop a video to cut.")
+        super.init(status: "Drop a video to cut.", channel: .cutter)
     }
 
     var range: Result<ClosedRange<Double>, RangeError> {
@@ -250,7 +254,7 @@ final class JoinerModel: ToolModel {
     private var previewTasks: [UUID: Task<Void, Never>] = [:]
 
     init() {
-        super.init(status: "Add two or more videos, or cuts of them, then click Join.")
+        super.init(status: "Add two or more videos, or cuts of them, then click Join.", channel: .joiner)
     }
 
     func add(_ urls: [URL]) {

@@ -42,7 +42,8 @@ struct ContentView: View {
             case .joiner:
                 JoinerView(model: joiner)
             }
-            LogView()
+            LogView(channel: tab)
+                .id(tab)
                 .frame(minHeight: 120)
         }
         .padding(18)
@@ -313,17 +314,26 @@ struct APIKeyBar: View {
 
 struct LogView: View {
     @EnvironmentObject var queue: JobQueue
+    /// Which tab's log to show.
+    let channel: AppTab
 
     var body: some View {
+        let lines = queue.lines(channel)
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                SectionTitle("Log")
+                SectionTitle("\(channel.rawValue) log")
                 Spacer()
                 FeedbackButton("Copy Log", done: "Copied") {
                     NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(queue.logText(), forType: .string)
+                    NSPasteboard.general.setString(queue.logText(channel), forType: .string)
                 }
                 .buttonStyle(.pillSmall)
+                .disabled(lines.isEmpty)
+                FeedbackButton("Clear Log", done: "Cleared") {
+                    queue.clearLog(channel)
+                }
+                .buttonStyle(.pillSmall)
+                .disabled(lines.isEmpty)
                 Button("Open Log Folder") {
                     try? FileManager.default.createDirectory(at: AppPaths.logs, withIntermediateDirectories: true)
                     NSWorkspace.shared.open(AppPaths.logs)
@@ -333,7 +343,11 @@ struct LogView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 3) {
-                        ForEach(queue.log) { line in
+                        if lines.isEmpty {
+                            Text("Nothing logged yet.")
+                                .foregroundColor(Theme.textFaint)
+                        }
+                        ForEach(lines) { line in
                             HStack(alignment: .firstTextBaseline, spacing: 10) {
                                 Text(queue.formattedTime(line.time)).foregroundColor(Theme.textFaint)
                                 Text(line.text)
@@ -350,8 +364,11 @@ struct LogView: View {
                 }
                 .background(RoundedRectangle(cornerRadius: Theme.corner).fill(Theme.logBackground))
                 .overlay(RoundedRectangle(cornerRadius: Theme.corner).stroke(Theme.border, lineWidth: 1))
-                .onChange(of: queue.log.count) { _ in
-                    if let last = queue.log.last { proxy.scrollTo(last.id, anchor: .bottom) }
+                .onChange(of: lines.count) { _ in
+                    if let last = lines.last { proxy.scrollTo(last.id, anchor: .bottom) }
+                }
+                .onAppear {
+                    if let last = lines.last { proxy.scrollTo(last.id, anchor: .bottom) }
                 }
             }
         }
