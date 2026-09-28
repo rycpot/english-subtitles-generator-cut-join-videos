@@ -124,6 +124,7 @@ Each tab (Subtitles, Cutter, Joiner) has its own log at the bottom of the window
 
 - Whisper large-v3 translates **European languages** (Spanish, French, German, Italian, Portuguese, Dutch, Polish, …) very well.
 - **Hindi, Urdu and Bengali** come out decent. **Tamil, Telugu, Malayalam, Kannada and Marathi** are weaker: expect the gist rather than polished dialogue.
+- **Skipped dialogue:** each part is sent with the previous part's last lines so names stay consistent. Now and then this makes Whisper skip most of a part; a part that comes back with very few words for its length is asked again without them, and the fuller reply is kept (the log shows "asked again without context").
 - **East Asian languages:**
   - **Japanese and Mandarin Chinese** are among Whisper's stronger languages and usually give good, followable subtitles.
   - **Korean** is also good, but on short parts Whisper sometimes mistakes it for Japanese or Chinese and answers in that language. The app detects this and asks again, then removes any foreign text left over, so expect the odd missing line rather than wrong-language lines.

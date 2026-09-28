@@ -91,7 +91,6 @@ final class Pipeline {
 
         var results: [ChunkResult] = []
         var previousText: String?
-        log(.detail, "Context between parts: \(settings.contextMode.title).")
         var lastRequest: Date?
         let total = plan.parts.count
         for (i, part) in plan.parts.enumerated() {
@@ -125,8 +124,7 @@ final class Pipeline {
                         throw SubtitleError(.badResponse, String(decoding: data.prefix(300), as: UTF8.self))
                     }
                 }
-                let context = settings.contextMode == .none ? nil : previousText
-                var (data, reply) = try await request(prompt: context)
+                var (data, reply) = try await request(prompt: previousText)
                 // Whisper sometimes mistakes the language of a short part and
                 // answers in Chinese, Japanese etc. Ask once more with an
                 // English-only hint and no context from earlier parts.
@@ -141,7 +139,7 @@ final class Pipeline {
                 // treats the audio as already covered and returns a line or two
                 // for a long stretch of speech. Ask again without the prompt and
                 // keep whichever reply has more words.
-                if settings.contextMode == .previousWithRetry, context != nil {
+                if previousText != nil {
                     let words = Self.wordCount(reply)
                     let length = part.end - part.start
                     if Double(words) < Self.thinWordsPerSecond * length {
@@ -149,7 +147,7 @@ final class Pipeline {
                         let retryWords = Self.wordCount(retry)
                         let keep = retryWords > words
                         log(.detail, "\(label): only \(words) word\(words == 1 ? "" : "s") for \(Int(length.rounded())) s; "
-                            + "asked again without context → \(retryWords) words (\(keep ? "kept the new reply" : "kept the first"))).")
+                            + "asked again without context → \(retryWords) words (\(keep ? "kept the new reply" : "kept the first")).")
                         if keep { (data, reply) = (retryData, retry) }
                     }
                 }

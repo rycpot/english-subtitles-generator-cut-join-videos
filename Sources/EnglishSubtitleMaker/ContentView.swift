@@ -380,22 +380,9 @@ struct LogView: View {
 struct SettingsView: View {
     @EnvironmentObject var queue: JobQueue
     @AppStorage(PrefKeys.dialogueFocus) private var dialogueFocus = true
-    @AppStorage(PrefKeys.contextMode) private var contextMode = ContextMode.previousWithRetry
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 6) {
-                SectionTitle("Context between parts")
-                Picker("", selection: $contextMode) {
-                    ForEach(ContextMode.allCases) { Text($0.title).tag($0) }
-                }
-                .pickerStyle(.radioGroup)
-                .labelsHidden()
-                Text("Films are sent to Groq in parts of up to 30 s. The previous part's last lines can help keep names consistent, but now and then make Whisper skip most of a part.")
-                    .font(.system(size: 11))
-                    .foregroundColor(Theme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
             VStack(alignment: .leading, spacing: 6) {
                 SectionTitle("Surround audio")
                 Toggle("Dialogue focus: on 5.1/7.1 audio, use only the centre channel", isOn: $dialogueFocus)
