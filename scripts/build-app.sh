@@ -43,6 +43,8 @@ sed -e "s/__VERSION__/$VERSION/" -e "s/__BUILD__/$BUILD/" Packaging/Info.plist >
 plutil -lint "$APP/Contents/Info.plist"
 require_monterey "$APP/Contents/MacOS/EnglishSubtitleMaker"
 
+cp THIRD_PARTY_NOTICES.md "$APP/Contents/Resources/THIRD_PARTY_NOTICES.md"
+
 if [ -f Packaging/AppIcon.icns ]; then
   cp Packaging/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 fi

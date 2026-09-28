@@ -150,3 +150,7 @@ GitHub Actions (`.github/workflows/build.yml`) does this on every push:
 Layout:
 - `Sources/SubtitleCore`: pure logic (ffmpeg output parsing, chunk planning, Groq types, SRT building), unit-tested.
 - `Sources/EnglishSubtitleMaker`: the SwiftUI app, process runner, Groq client and pipeline. `EnglishSubtitleMaker --selftest <file>` runs everything except the upload.
+
+## Third-party software
+
+The app bundles FFmpeg's `ffmpeg` and `ffprobe` (GPL v3); see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for sources and license. Speech recognition and translation use [Groq](https://groq.com)'s Whisper API under your own free account.
