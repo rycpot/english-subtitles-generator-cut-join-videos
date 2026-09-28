@@ -393,6 +393,23 @@ final class CutPlannerTests: XCTestCase {
         XCTAssertEqual(p, [.copy(start: keys[0].pts, end: 120, fromDTS: nil, toDTS: nil)])
     }
 
+    func testOpenGOPKeyframesGetTheirLeadingFrames() {
+        // Decode order: I (shown 6.006), then two B frames shown before it, then P.
+        let csv = "5.880,5.839,___\n6.006,5.881,K__\n5.964,5.923,___\n5.922,5.964,___\n6.089,6.006,___\n"
+            + "8.008,7.883,K__\n8.050,7.924,___\n"
+        let k = CutPlanner.parseKeyframes(csv)
+        XCTAssertEqual(k, [Keyframe(pts: 6.006, dts: 5.881, lead: 5.922), Keyframe(pts: 8.008, dts: 7.883)])
+    }
+
+    func testOpenGOPTailStartsAtTheLastKeyframesLeadingFrames() {
+        let open = keys.map { Keyframe(pts: $0.pts, dts: $0.dts, lead: $0.pts - 2 * fd) }
+        let p = CutPlanner.plan(start: 20.5, end: 32.7, keyframes: open, frameDuration: fd, firstKeyframe: 0.023, reachesFileEnd: false)
+        let k1 = open[11], k2 = open[16]
+        XCTAssertEqual(p, [.encode(start: 20.5, end: k1.pts),
+                           .copy(start: k1.pts, end: k2.lead, fromDTS: k1.dts, toDTS: k2.dts),
+                           .encode(start: k2.lead, end: 32.7)])
+    }
+
     func testChaptersFollowPieces() {
         let ch = [ChapterInfo(start: 0, end: 600, title: "One"), ChapterInfo(start: 600, end: 1200, title: "Two")]
         let out = ChapterPlanner.chapters(for: [(ch, 500, 700), (ch, 0, 100)])

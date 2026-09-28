@@ -83,12 +83,16 @@ enum SelfTest {
     }
 
     /// `EnglishSubtitleMaker --selftest-tools <folder>`: cuts, splits and joins
-    /// test films in <folder> (src.mkv, src2.mkv, other720.mp4) and checks every
-    /// output has exactly the expected frames and decodes without errors.
+    /// test films in <folder> (src.mkv, src2.mkv, other720.mp4, opengop.mp4) and
+    /// checks every output has exactly the expected frames and decodes without errors.
     static func runTools(folder: URL) -> Never {
         Task.detached {
             do {
-                let tools = try MediaTools.make(log: { _, text in print("  " + text) }, progress: { _, _ in })
+                let fallbacks = FallbackCounter()
+                let tools = try MediaTools.make(log: { _, text in
+                    print("  " + text)
+                    if text.contains("don't join cleanly") { fallbacks.add() }
+                }, progress: { _, _ in })
                 let src = folder.appendingPathComponent("src.mkv")
                 let src2 = folder.appendingPathComponent("src2.mkv")
                 let other = folder.appendingPathComponent("other720.mp4")
@@ -154,6 +158,19 @@ enum SelfTest {
                 if !sizeOK { failures += 1 }
                 try await check("converted join", mixed, frames: 8 * 25, tolerance: 1)
 
+                // 6. Open GOP (as in many films and trailers), cut in the middle.
+                let og = folder.appendingPathComponent("opengop.mp4")
+                let p4 = try await tools.probe(og)
+                let pts4 = try await tools.framePTS(og)
+                let ogCut = out.appendingPathComponent("opengop-cut.mp4")
+                try await tools.render([MediaPiece(url: og, probe: p4, start: 5.3, end: 15.6)], to: ogCut)
+                try await check("open-GOP cut 5.3-15.6", ogCut, frames: expected(pts4, p4, 5.3, 15.6))
+
+                // The quick cut must not have fallen back to full re-encoding anywhere.
+                let fell = fallbacks.count
+                print(fell == 0 ? "PASS quick cut used throughout" : "FAIL quick cut fell back \(fell) time(s)")
+                if fell > 0 { failures += 1 }
+
                 print(failures == 0 ? "TOOLS OK" : "TOOLS FAILED: \(failures)")
                 exit(failures == 0 ? 0 : 1)
             } catch {
@@ -163,4 +180,12 @@ enum SelfTest {
         }
         while true { sleep(60) }
     }
+}
+
+/// Counts smart-cut fallbacks reported through the log during the tools self-test.
+final class FallbackCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+    func add() { lock.lock(); value += 1; lock.unlock() }
+    var count: Int { lock.lock(); defer { lock.unlock() }; return value }
 }

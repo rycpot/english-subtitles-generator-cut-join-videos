@@ -2,12 +2,19 @@ import Foundation
 
 /// A keyframe (a point where a video can be cut without re-encoding), with its
 /// display time (pts) and decode time (dts), in the file's own time base.
+///
+/// In "open GOP" video (common in films and trailers) the frames decoded right
+/// after a keyframe can be shown before it and depend on the previous group.
+/// `lead` is the earliest display time among the keyframe and those frames;
+/// it equals `pts` when there are none.
 public struct Keyframe: Equatable {
     public let pts: Double
     public let dts: Double
-    public init(pts: Double, dts: Double) {
+    public let lead: Double
+    public init(pts: Double, dts: Double, lead: Double? = nil) {
         self.pts = pts
         self.dts = dts
+        self.lead = lead ?? pts
     }
 }
 
@@ -43,18 +50,23 @@ public enum CutPiece: Equatable {
 
 public enum CutPlanner {
     /// Parses `ffprobe -show_entries packet=pts_time,dts_time,flags -of csv=p=0`
-    /// and keeps the keyframes. The first packet often has no dts; it is then
-    /// estimated from the pts-to-dts delay of the other keyframes.
+    /// (packets in decode order) and keeps the keyframes. The first packet often
+    /// has no dts; it is then estimated from the pts-to-dts delay of the other
+    /// keyframes. Frames decoded after a keyframe but shown before it set its `lead`.
     public static func parseKeyframes(_ csv: String) -> [Keyframe] {
-        var raw: [(pts: Double, dts: Double?)] = []
+        var raw: [(pts: Double, dts: Double?, lead: Double)] = []
         var delays: [Double] = []
         for line in csv.components(separatedBy: .newlines) {
             let cols = line.split(separator: ",", omittingEmptySubsequences: false).map {
                 $0.trimmingCharacters(in: .whitespaces)
             }
-            guard cols.count >= 3, cols[2].contains("K"), let pts = Double(cols[0]) else { continue }
+            guard cols.count >= 3, let pts = Double(cols[0]) else { continue }
+            guard cols[2].contains("K") else {
+                if !raw.isEmpty, pts < raw[raw.count - 1].lead { raw[raw.count - 1].lead = pts }
+                continue
+            }
             let dts = Double(cols[1])
-            raw.append((pts, dts))
+            raw.append((pts, dts, pts))
             if let dts { delays.append(pts - dts) }
         }
         delays.sort()
@@ -62,7 +74,7 @@ public enum CutPlanner {
         var seen = Set<Double>()
         return raw.compactMap { k in
             guard seen.insert(k.pts).inserted else { return nil }
-            return Keyframe(pts: k.pts, dts: k.dts ?? k.pts - delay)
+            return Keyframe(pts: k.pts, dts: k.dts ?? k.pts - delay, lead: k.lead)
         }
         .sorted { $0.pts < $1.pts }
     }
@@ -70,7 +82,9 @@ public enum CutPlanner {
     /// Plans a frame-exact cut of start..<end (file time base) that copies as
     /// much as possible: the stretch between the first and last keyframe inside
     /// the range is copied, and only the frames before the first keyframe and
-    /// from the last keyframe on are re-encoded.
+    /// from the last keyframe on are re-encoded. With open GOP, the copy leaves
+    /// out the first keyframe's leading frames (the head covers them) and stops
+    /// before the last keyframe's leading frames (the tail covers them).
     /// - Parameters:
     ///   - frameDuration: one frame, used for tolerances
     ///   - firstKeyframe: pts of the file's very first keyframe (a copy that
@@ -93,12 +107,12 @@ public enum CutPlanner {
             return pieces
         }
         let k2 = inner.last!
-        guard k2.pts - k1.pts > tol else {
+        guard k2.lead - k1.pts > tol else {
             // Only one keyframe inside: nothing worth copying.
             return [.encode(start: s, end: e)]
         }
-        pieces.append(.copy(start: k1.pts, end: k2.pts, fromDTS: fromDTS, toDTS: k2.dts))
-        if e - k2.pts > tol { pieces.append(.encode(start: k2.pts, end: e)) }
+        pieces.append(.copy(start: k1.pts, end: k2.lead, fromDTS: fromDTS, toDTS: k2.dts))
+        if e - k2.lead > tol { pieces.append(.encode(start: k2.lead, end: e)) }
         return pieces
     }
 }

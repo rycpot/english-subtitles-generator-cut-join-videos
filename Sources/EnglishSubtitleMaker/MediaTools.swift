@@ -230,7 +230,12 @@ final class MediaTools {
         case .copy(_, _, let fromDTS, let toDTS):
             if let fromDTS { args += ["-ss", String(format: "%.6f", fromDTS - fd / 4)] }
             if let toDTS { args += ["-to", String(format: "%.6f", toDTS - fd / 4)] }
-            args += ["-map", "0:\(v.index)", "-c", "copy", "-bsf:v", "h264_mp4toannexb"]
+            // dump_extra repeats the SPS/PPS on every keyframe: open-GOP files only
+            // carry them before IDR frames, which a cut may not start at.
+            // noise drops the frames shown before the first (key)frame: in open
+            // GOP they need the previous group, and the re-encoded head has them.
+            args += ["-map", "0:\(v.index)", "-c", "copy",
+                     "-bsf:v", "h264_mp4toannexb,dump_extra=freq=keyframe,noise=drop=lt(pts\\,startpts)"]
         case .encode(let start, let end):
             args += ["-map", "0:\(v.index)",
                      "-vf", String(format: "trim=start=%.6f:end=%.6f", start, end),
