@@ -94,6 +94,7 @@ final class MediaTools {
     /// Writes `pieces`, in order, into one file at `output`. If their formats
     /// differ, all are converted to the format of piece `target` (default: auto).
     func render(_ pieces: [MediaPiece], to output: URL, target: Int? = nil) async throws {
+        let pieces = try await pieces.asyncMap { try await snapped($0) }
         guard let first = pieces.first else { return }
         let work = AppPaths.cache.appendingPathComponent("tools-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
@@ -209,6 +210,11 @@ final class MediaTools {
         args += ["-map_metadata", "\(metaIndex)", "-map_chapters", "\(metaIndex)", "-c", "copy"]
         if isMP4(output) {
             args += ["-c:s", "mov_text", "-movflags", "+faststart"]
+            // Keep the source's time base: the MPEG-TS pieces use 1/90000, which
+            // cannot hold 23.976 fps frame times exactly.
+            if let tb = first.video?.timeBase, tb.hasPrefix("1/"), let scale = Int(tb.dropFirst(2)), scale > 0, scale != 90000 {
+                args += ["-video_track_timescale", String(scale)]
+            }
             if first.video?.codecName == "hevc" { args += ["-tag:v", "hvc1"] }
         }
         progress(Double(totalSteps - 1) / Double(totalSteps), "Joining…")
@@ -334,6 +340,27 @@ final class MediaTools {
     }
 
     // MARK: Helpers
+
+    /// Moves a piece's start and end onto the first frame at or after them, so
+    /// every part of a cut lasts exactly its frames: no timing gap where parts
+    /// meet, and the output keeps the source's exact frame rate.
+    private func snapped(_ piece: MediaPiece) async throws -> MediaPiece {
+        guard let v = piece.probe.video else { return piece }
+        let tol = piece.probe.frameDuration * 0.01
+        func firstFrame(atOrAfter t: Double) async throws -> Double? {
+            let result = try await tool(ffprobe, ["-v", "error", "-select_streams", "\(v.index)",
+                                                  "-show_entries", "packet=pts_time", "-of", "csv=p=0",
+                                                  "-read_intervals", String(format: "%.3f%%%.3f", max(0, t - 2), t + 2),
+                                                  piece.url.path])
+            guard result.status == 0 else { return nil }
+            return CutPlanner.firstFrame(atOrAfter: t - tol, in: result.stdout)
+        }
+        let start = try await firstFrame(atOrAfter: piece.absStart) ?? piece.absStart
+        let end = piece.reachesFileEnd ? piece.absEnd : (try await firstFrame(atOrAfter: piece.absEnd) ?? piece.absEnd)
+        guard end > start else { return piece }
+        return MediaPiece(url: piece.url, probe: piece.probe,
+                          start: start - piece.probe.startTime, end: end - piece.probe.startTime)
+    }
 
     private func firstKeyframe(_ piece: MediaPiece) async throws -> Double? {
         let v = piece.probe.video!

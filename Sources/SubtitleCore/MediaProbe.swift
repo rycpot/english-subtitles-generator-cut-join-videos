@@ -22,6 +22,7 @@ public struct ProbeStream: Decodable, Equatable {
     public var pixFmt: String?
     public var rFrameRate: String?
     public var avgFrameRate: String?
+    public var timeBase: String?
     public var sampleAspectRatio: String?
     public var sampleRate: String?
     public var channels: Int?
@@ -87,7 +88,8 @@ public extension ProbeResult {
     var joinSignature: JoinSignature {
         JoinSignature(
             video: video.map { [$0.codecName ?? "", "\($0.width ?? 0)x\($0.height ?? 0)", $0.pixFmt ?? "",
-                                $0.rFrameRate ?? "", $0.sampleAspectRatio ?? "1:1"] } ?? [],
+                                Self.rate($0.rFrameRate).map { String(format: "%.3f", $0) } ?? "",
+                                $0.sampleAspectRatio ?? "1:1"] } ?? [],
             audio: audio.map { [$0.codecName ?? "", $0.sampleRate ?? "", "\($0.channels ?? 0)"] },
             subtitles: subtitles.map { $0.codecName ?? "" })
     }

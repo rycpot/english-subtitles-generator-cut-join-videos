@@ -79,6 +79,15 @@ public enum CutPlanner {
         .sorted { $0.pts < $1.pts }
     }
 
+    /// The display time of the first frame at or after `time`, from
+    /// `ffprobe -show_entries packet=pts_time -of csv=p=0` output; nil if none.
+    public static func firstFrame(atOrAfter time: Double, in csv: String) -> Double? {
+        csv.components(separatedBy: .newlines)
+            .compactMap { Double($0.split(separator: ",").first.map(String.init)?.trimmingCharacters(in: .whitespaces) ?? "") }
+            .filter { $0 >= time }
+            .min()
+    }
+
     /// Plans a frame-exact cut of start..<end (file time base) that copies as
     /// much as possible: the stretch between the first and last keyframe inside
     /// the range is copied, and only the frames before the first keyframe and

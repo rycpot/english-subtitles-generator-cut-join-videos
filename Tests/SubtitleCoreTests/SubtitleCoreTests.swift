@@ -393,6 +393,13 @@ final class CutPlannerTests: XCTestCase {
         XCTAssertEqual(p, [.copy(start: keys[0].pts, end: 120, fromDTS: nil, toDTS: nil)])
     }
 
+    func testFirstFrameAtOrAfter() {
+        let csv = "30.780750,\n30.697333\n30.739042\n30.822458\n"
+        XCTAssertEqual(CutPlanner.firstFrame(atOrAfter: 30.7, in: csv), 30.739042)
+        XCTAssertEqual(CutPlanner.firstFrame(atOrAfter: 30.739042, in: csv), 30.739042)
+        XCTAssertNil(CutPlanner.firstFrame(atOrAfter: 31, in: csv))
+    }
+
     func testOpenGOPKeyframesGetTheirLeadingFrames() {
         // Decode order: I (shown 6.006), then two B frames shown before it, then P.
         let csv = "5.880,5.839,___\n6.006,5.881,K__\n5.964,5.923,___\n5.922,5.964,___\n6.089,6.006,___\n"
@@ -438,6 +445,13 @@ final class CutPlannerTests: XCTestCase {
         other.streams[0].width = 1280
         XCTAssertNotEqual(p.joinSignature, other.joinSignature)
         XCTAssertEqual(p.joinSignature.differences(from: other.joinSignature), ["video size 1280x360 vs 640x360"])
+        // Frame rates compare by value, not by how ffprobe wrote the fraction.
+        var same = p
+        same.streams[0].rFrameRate = "48000/2002"
+        XCTAssertEqual(p.joinSignature, same.joinSignature)
+        var film24 = p
+        film24.streams[0].rFrameRate = "24/1"
+        XCTAssertEqual(p.joinSignature.differences(from: film24.joinSignature), ["video frame rate 24.000 vs 23.976"])
     }
 }
 

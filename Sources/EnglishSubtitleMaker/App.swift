@@ -166,6 +166,24 @@ enum SelfTest {
                 try await tools.render([MediaPiece(url: og, probe: p4, start: 5.3, end: 15.6)], to: ogCut)
                 try await check("open-GOP cut 5.3-15.6", ogCut, frames: expected(pts4, p4, 5.3, 15.6))
 
+                // 7. Split the open-GOP film into 2 parts: each keeps the source's exact
+                //    format (so the Joiner sees them as matching), and joining them back
+                //    gives exactly the frames of the range.
+                var ogParts: [MediaPiece] = []
+                for (i, r) in RangeSplitter.split(start: 0.3, end: 20.3, mode: .count(2)).enumerated() {
+                    let part = out.appendingPathComponent("opengop-part\(i + 1).mp4")
+                    try await tools.render([MediaPiece(url: og, probe: p4, start: r.start, end: r.end)], to: part)
+                    let pp = try await tools.probe(part)
+                    let diff = pp.joinSignature.differences(from: p4.joinSignature)
+                    print(diff.isEmpty ? "PASS open-GOP part \(i + 1) keeps the format (\(pp.formatSummary))"
+                                       : "FAIL open-GOP part \(i + 1) format: \(diff)")
+                    if !diff.isEmpty { failures += 1 }
+                    ogParts.append(MediaPiece(url: part, probe: pp, start: 0, end: pp.duration))
+                }
+                let ogJoined = out.appendingPathComponent("opengop-joined.mp4")
+                try await tools.render(ogParts, to: ogJoined)
+                try await check("open-GOP parts joined back", ogJoined, frames: expected(pts4, p4, 0.3, 20.3))
+
                 // The quick cut must not have fallen back to full re-encoding anywhere.
                 let fell = fallbacks.count
                 print(fell == 0 ? "PASS quick cut used throughout" : "FAIL quick cut fell back \(fell) time(s)")
