@@ -51,10 +51,14 @@ public enum RangeSplitter {
             return [(start, end)]
         case .count(let n):
             guard n > 1 else { return [(start, end)] }
-            let length = (end - start) / Double(n)
-            return (0..<n).map { i in
-                (start + Double(i) * length, i == n - 1 ? end : start + Double(i + 1) * length)
+            let length: Double = (end - start) / Double(n)
+            var ranges: [(start: Double, end: Double)] = []
+            for i in 0..<n {
+                let s: Double = start + Double(i) * length
+                let e: Double = i == n - 1 ? end : start + Double(i + 1) * length
+                ranges.append((s, e))
             }
+            return ranges
         case .length(let length):
             guard length > 0 else { return [(start, end)] }
             var ranges: [(start: Double, end: Double)] = []
