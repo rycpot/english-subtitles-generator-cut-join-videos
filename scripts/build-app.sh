@@ -1,5 +1,5 @@
 #!/bin/bash
-# Builds "English Subtitle Maker.app" (Intel, macOS 12+) and zips it into dist/.
+# Builds "English Subtitles Generator, Cut & Join Videos.app" (Intel, macOS 12+) and zips it into dist/.
 #
 #   FFMPEG_BIN=/path/to/ffmpeg scripts/build-app.sh
 #
@@ -12,7 +12,7 @@ cd "$(dirname "$0")/.."
 ARCH="${ARCH:-x86_64}"
 VERSION="${VERSION:-1.0.0}"
 BUILD="${BUILD_NUMBER:-1}"
-APP_NAME="English Subtitle Maker"
+APP_NAME="English Subtitles Generator, Cut & Join Videos"
 APP="dist/$APP_NAME.app"
 
 # Prints the minimum macOS version a Mach-O binary declares.
@@ -66,5 +66,5 @@ codesign --force --sign - "$APP/Contents/Resources/ffprobe" 2>/dev/null || true
 codesign --force --sign - "$APP"
 codesign --verify --verbose "$APP"
 
-(cd dist && ditto -c -k --keepParent "$APP_NAME.app" "EnglishSubtitleMaker-macOS.zip")
-echo "Built dist/EnglishSubtitleMaker-macOS.zip"
+(cd dist && ditto -c -k --keepParent "$APP_NAME.app" "EnglishSubtitlesGenerator-CutJoinVideos-macOS.zip")
+echo "Built dist/EnglishSubtitlesGenerator-CutJoinVideos-macOS.zip"

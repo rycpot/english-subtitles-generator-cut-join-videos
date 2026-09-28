@@ -194,7 +194,7 @@ struct Header: View {
                 .resizable()
                 .frame(width: 30, height: 30)
             VStack(alignment: .leading, spacing: 1) {
-                Text("English Subtitle Maker")
+                Text("English Subtitles Generator, Cut & Join Videos")
                     .font(.system(size: 16, weight: .bold))
                 Text("Subtitles · Cutter · Joiner")
                     .font(.system(size: 11))

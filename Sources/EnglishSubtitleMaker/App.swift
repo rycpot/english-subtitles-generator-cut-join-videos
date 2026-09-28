@@ -20,7 +20,7 @@ struct EnglishSubtitleMakerApp: App {
     @StateObject private var queue = JobQueue.shared
 
     var body: some Scene {
-        WindowGroup("English Subtitle Maker") {
+        WindowGroup("English Subtitles Generator, Cut & Join Videos") {
             ContentView().environmentObject(queue)
         }
         .commands {

@@ -3,9 +3,9 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleName</key>
-	<string>English Subtitle Maker</string>
+	<string>English Subtitles Generator, Cut &amp; Join Videos</string>
 	<key>CFBundleDisplayName</key>
-	<string>English Subtitle Maker</string>
+	<string>English Subtitles Generator, Cut &amp; Join Videos</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.rycpot.EnglishSubtitleMaker</string>
 	<key>CFBundleExecutable</key>

@@ -1,4 +1,6 @@
-# English Subtitle Maker
+# English Subtitles Generator, Cut & Join Videos
+
+Three tools for movies on your Mac, in one small app: **English subtitles** for foreign-language films, a frame-exact **Cutter/Splitter**, and a **Joiner**. They're described below, subtitles first.
 
 A small macOS app: **drop a foreign-language movie (.mp4, .mkv, …) on it and get English subtitles** (`Movie.srt`) saved next to the movie. VLC picks them up automatically. If a `Movie.srt` already exists, it is kept as `Movie.srt.bak`.
 
@@ -52,15 +54,15 @@ A 3-hour film is about 390 parts. The first 2 hours of audio go through at full 
 
 ## Install (first time)
 
-1. **Download** `EnglishSubtitleMaker-macOS.zip`:
+1. **Download** `EnglishSubtitlesGenerator-CutJoinVideos-macOS.zip`:
    - From the repository's **Releases** page, if a release exists, or
    - From **Actions → latest "Build" run → Artifacts**. Artifacts arrive as a zip that contains the zip; unzip both.
-2. Unzip, and drag **English Subtitle Maker.app** into **Applications**.
+2. Unzip, and drag **English Subtitles Generator, Cut & Join Videos.app** into **Applications**.
 3. The app isn't notarised by Apple (that needs a paid developer account), so macOS blocks it the first time. Either:
    - **Right-click** the app → **Open** → **Open**, or
    - In Terminal, run:
      ```
-     xattr -dr com.apple.quarantine "/Applications/English Subtitle Maker.app"
+     xattr -dr com.apple.quarantine "/Applications/English Subtitles Generator, Cut & Join Videos.app"
      ```
 4. **Get a free Groq API key**:
    1. Go to [console.groq.com/keys](https://console.groq.com/keys) and sign in with Google or email.
@@ -125,7 +127,7 @@ Needs Xcode 15+ (or its Command Line Tools) on macOS, plus a static ffmpeg binar
 
 ```
 swift test
-FFMPEG_BIN=/path/to/ffmpeg scripts/build-app.sh   # → dist/EnglishSubtitleMaker-macOS.zip
+FFMPEG_BIN=/path/to/ffmpeg scripts/build-app.sh   # → dist/EnglishSubtitlesGenerator-CutJoinVideos-macOS.zip
 ```
 
 GitHub Actions (`.github/workflows/build.yml`) does this on every push:
