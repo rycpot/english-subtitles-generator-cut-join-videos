@@ -43,7 +43,7 @@ As published by Groq when this was written; they may change:
 
 Two more tabs use the bundled ffmpeg to cut and join videos **without changing their quality**.
 
-**Cutter:** drop a video, type a start time and either an end time or a length ("from 00:20:00, 00:02:00 long"). Stills of the first and last frame show exactly what you will get. Optionally split the cut **into N equal parts** or **into parts of a fixed length** (the last part may be shorter). Results are saved next to the original, e.g. `Movie [00.20.00–00.22.00].mkv` or `Movie [00.20.00–00.22.00] part 1 of 4.mkv`.
+**Cutter:** drop a video, pick a start time and either an end time or a length ("from 00:20:00, 00:02:00 long") from the hours : minutes : seconds · frame dropdowns. They only offer times inside the video (hours are greyed out for videos under an hour), and the frame dropdown picks an exact frame within the second. Right-click the dropdowns to copy or paste a time. Stills of the first and last frame show exactly what you will get. Optionally split the cut **into N equal parts** or **into parts of a fixed length** (the last part may be shorter). Results are saved next to the original, e.g. `Movie [00.20.00–00.22.00].mkv` or `Movie [00.20.00–00.22.00] part 1 of 4.mkv`.
 
 **Joiner:** drop one or more videos. Each piece is either the **whole file** or a **cut** of it; the ⧉ button adds another cut from the same file. Reorder pieces by dragging or with the arrows; they are joined in the order shown into `Joined <date> <time>.<ext>` next to the first file.
 

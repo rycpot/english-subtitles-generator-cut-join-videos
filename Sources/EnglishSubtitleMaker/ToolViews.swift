@@ -79,25 +79,109 @@ struct TimeField: View {
     }
 }
 
+/// A time picked from dropdowns: hours : minutes : seconds : frame. Each
+/// dropdown only offers values up to `limit` (seconds), so only times inside
+/// the video can be picked; hours are disabled for videos under an hour.
+/// The value is stored as text ("00:02:07.792"), like the rest of the range.
+struct TimeDropdowns: View {
+    let label: String
+    @Binding var text: String
+    let limit: Double
+    let frameDuration: Double
+    var invalid = false
+
+    private var clock: FrameClock { FrameClock(frameDuration: frameDuration) }
+    private var limitTime: FrameTime { clock.time(max(0, limit)) }
+    private var value: FrameTime { clock.clamp(clock.time(TimeCode.parse(text) ?? 0), to: limitTime) }
+
+    var body: some View {
+        let choices = clock.choices(for: value, limit: limitTime)
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label.uppercased())
+                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                .tracking(1.5)
+                .foregroundColor(Theme.textFaint)
+            HStack(spacing: 2) {
+                unit(\.hours, choices.hours, caption: "h").disabled(limitTime.hours == 0)
+                colon
+                unit(\.minutes, choices.minutes, caption: "m")
+                colon
+                unit(\.seconds, choices.seconds, caption: "s")
+                Text("·").font(.system(size: 14, design: .monospaced)).foregroundColor(Theme.textFaint)
+                unit(\.frame, choices.frames, caption: "frame")
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Theme.logBackground))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(invalid ? Theme.error : Theme.border, lineWidth: 1))
+            .contextMenu {
+                Button("Copy Time") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(TimeCode.format(clock.seconds(value)), forType: .string)
+                }
+                Button("Paste Time") {
+                    if let s = NSPasteboard.general.string(forType: .string), let t = TimeCode.parse(s) {
+                        set(clock.clamp(clock.time(t), to: limitTime))
+                    }
+                }
+            }
+        }
+        .onAppear(perform: normalize)
+        .onChange(of: limit) { _ in normalize() }
+    }
+
+    private var colon: some View {
+        Text(":").font(.system(size: 14, design: .monospaced)).foregroundColor(Theme.textFaint)
+    }
+
+    private func unit(_ key: WritableKeyPath<FrameTime, Int>, _ range: ClosedRange<Int>, caption: String) -> some View {
+        Picker("", selection: Binding(get: { min(max(value[keyPath: key], range.lowerBound), range.upperBound) },
+                                      set: { newValue in
+                                          var t = value
+                                          t[keyPath: key] = newValue
+                                          set(clock.clamp(t, to: limitTime))
+                                      })) {
+            ForEach(Array(range), id: \.self) { Text(String(format: "%02d", $0)).tag($0) }
+        }
+        .labelsHidden()
+        .pickerStyle(.menu)
+        .font(.system(size: 13, design: .monospaced))
+        .frame(width: 58)
+        .help(caption == "frame" ? "Frame within the second" : (caption == "h" ? "Hours" : caption == "m" ? "Minutes" : "Seconds"))
+    }
+
+    private func set(_ t: FrameTime) {
+        text = TimeCode.format(clock.seconds(t))
+    }
+
+    /// A stored time past the limit (a new file, or a later start) is pulled back to it.
+    private func normalize() {
+        if let t = TimeCode.parse(text), t <= clock.seconds(limitTime) + frameDuration / 2 { return }
+        set(value)
+    }
+}
+
 /// Start + (end time | duration) with frame previews.
 struct RangeEditor: View {
     @Binding var fields: RangeFields
     let fileDuration: Double?
+    let frameDuration: Double
     let preview: RangePreview
 
     var body: some View {
         let result = fields.resolve(fileDuration: fileDuration)
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .bottom, spacing: 14) {
-                TimeField(label: "Start", text: $fields.start, invalid: result.isBadStart)
+                TimeDropdowns(label: "Start", text: $fields.start, limit: startLimit,
+                              frameDuration: frameDuration, invalid: result.isBadStart)
                 Picker("", selection: $fields.endMode) {
                     ForEach(EndMode.allCases) { Text($0.rawValue).tag($0) }
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
                 .frame(width: 180)
-                TimeField(label: fields.endMode == .endTime ? "End" : "Length", text: $fields.end,
-                          invalid: result.isBadEnd)
+                TimeDropdowns(label: fields.endMode == .endTime ? "End" : "Length", text: $fields.end,
+                              limit: endLimit, frameDuration: frameDuration, invalid: result.isBadEnd)
                 Spacer()
             }
             switch result {
@@ -117,6 +201,15 @@ struct RangeEditor: View {
                 }
             }
         }
+    }
+}
+
+extension RangeEditor {
+    private var videoLength: Double { (fileDuration ?? 0) > 0 ? fileDuration! : 100 * 3600 - 1 }
+    /// The last frame can still start a cut.
+    fileprivate var startLimit: Double { max(0, videoLength - frameDuration) }
+    fileprivate var endLimit: Double {
+        fields.endMode == .endTime ? videoLength : max(0, videoLength - (TimeCode.parse(fields.start) ?? 0))
     }
 }
 
@@ -217,7 +310,8 @@ struct CutterView: View {
                             Button("Change…") { model.file = nil }.buttonStyle(.pillSmall).disabled(model.isRunning)
                         }
                         SectionTitle("Range")
-                        RangeEditor(fields: $model.fields, fileDuration: model.info?.duration, preview: model.preview)
+                        RangeEditor(fields: $model.fields, fileDuration: model.info?.duration,
+                                    frameDuration: model.info?.frameDuration ?? 0.04, preview: model.preview)
                         splitSection
                     }
                 }
@@ -260,6 +354,11 @@ struct CutterView: View {
                         .frame(width: 60)
                         .background(RoundedRectangle(cornerRadius: 8).fill(Theme.logBackground))
                         .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.border, lineWidth: 1))
+                    Stepper("", value: Binding(get: { Int(model.splitCount.trimmingCharacters(in: .whitespaces)) ?? 4 },
+                                               set: { model.splitCount = String($0) }),
+                            in: 2...500)
+                        .labelsHidden()
+                        .help("More or fewer parts")
                     Text("parts").font(.system(size: 12)).foregroundColor(Theme.textSecondary)
                 case .length:
                     TimeField(label: "Each part", text: $model.splitLength)
@@ -407,7 +506,8 @@ struct JoinPieceRow: View {
                 }
                 if !piece.whole {
                     RangeEditor(fields: Binding(get: { piece.fields }, set: { model.update(piece.id, fields: $0) }),
-                                fileDuration: piece.info?.duration, preview: piece.preview)
+                                fileDuration: piece.info?.duration,
+                                frameDuration: piece.info?.frameDuration ?? 0.04, preview: piece.preview)
                 }
             }
         }

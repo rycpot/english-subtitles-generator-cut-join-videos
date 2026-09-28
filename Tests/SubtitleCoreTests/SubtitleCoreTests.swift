@@ -472,3 +472,37 @@ final class JoinPlannerTests: XCTestCase {
         XCTAssertEqual(JoinPlanner.bestTarget([(phone, 60, 1280 * 720), (hd, 60, 1920 * 1080)]), 1)
     }
 }
+
+final class FrameClockTests: XCTestCase {
+    let film = FrameClock(frameDuration: 1001.0 / 24000)   // 23.976 fps
+
+    func testFramesPerSecond() {
+        XCTAssertEqual(film.framesPerSecond, 24)
+        XCTAssertEqual(FrameClock(frameDuration: 0.04).framesPerSecond, 25)
+        XCTAssertEqual(FrameClock(frameDuration: 1001.0 / 30000).framesPerSecond, 30)
+    }
+
+    func testRoundTripsThroughFrames() {
+        let t = FrameTime(hours: 0, minutes: 2, seconds: 7, frame: 19)
+        XCTAssertEqual(film.time(film.seconds(t)), t)
+        // Through the text a time field stores (millisecond precision).
+        XCTAssertEqual(film.time(TimeCode.parse(TimeCode.format(film.seconds(t)))!), t)
+        XCTAssertEqual(film.time(60), FrameTime(minutes: 1))
+        XCTAssertEqual(film.time(59.999), FrameTime(minutes: 1), "a hair before a second rounds to it")
+    }
+
+    func testOnlyTimesInsideTheVideoAreOffered() {
+        let limit = film.time(127.794)   // a 2:07.794 trailer
+        XCTAssertEqual(limit, FrameTime(minutes: 2, seconds: 7, frame: 19))
+        let early = film.choices(for: FrameTime(minutes: 1, seconds: 30), limit: limit)
+        XCTAssertEqual(early.hours, 0...0)
+        XCTAssertEqual(early.minutes, 0...2)
+        XCTAssertEqual(early.seconds, 0...59)
+        XCTAssertEqual(early.frames, 0...23)
+        let last = film.choices(for: FrameTime(minutes: 2, seconds: 7), limit: limit)
+        XCTAssertEqual(last.seconds, 0...7)
+        XCTAssertEqual(last.frames, 0...19)
+        XCTAssertEqual(film.clamp(FrameTime(minutes: 2, seconds: 30), to: limit), limit)
+        XCTAssertEqual(film.clamp(FrameTime(minutes: 1, seconds: 30), to: limit), FrameTime(minutes: 1, seconds: 30))
+    }
+}
