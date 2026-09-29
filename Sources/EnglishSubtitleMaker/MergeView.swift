@@ -276,9 +276,10 @@ struct MergeCanvasEditor: View {
             if let slide = model.slides[safe: model.selectedIndex ?? -1], slide.crop != CGRect(x: 0, y: 0, width: 1, height: 1) {
                 Button("Reset crop") { resetCrop() }.buttonStyle(.pillSmall)
             }
-            ColorPicker("Background", selection: $model.background, supportsOpacity: false)
-                .font(.system(size: 11))
-                .help("Colour of any canvas area the picture doesn't cover")
+            HStack(spacing: 4) {
+                Text("Background").font(.system(size: 11))
+                SimpleColorPickerSwiftUI(color: $model.background, help: "Colour of any canvas area the picture doesn't cover")
+            }
             Spacer()
             Text("⌥ drag: no snapping").font(.system(size: 10)).foregroundColor(Theme.textFaint)
             Button { zoom = max(0.25, zoom / 1.25) } label: { Image(systemName: "minus.magnifyingglass") }
@@ -533,6 +534,15 @@ struct TextPanel: View {
 
     private static let systemFamilies = NSFontManager.shared.availableFontFamilies.sorted()
 
+    private static let sizeFormatter: NumberFormatter = {
+        let f = NumberFormatter()
+        f.numberStyle = .none
+        f.minimum = 8
+        f.maximum = 400
+        f.maximumFractionDigits = 0
+        return f
+    }()
+
     /// A standard Open panel for font files. (SwiftUI's fileImporter doesn't
     /// open on macOS 12 when the screen already has one, like the drop area's.)
     private func chooseFonts() {
@@ -545,9 +555,10 @@ struct TextPanel: View {
                 set: { v in model.updateText { $0[keyPath: key] = v } })
     }
 
-    private func colour(_ key: WritableKeyPath<MergeText, NSColor>) -> Binding<Color> {
-        Binding(get: { Color(bind(key).wrappedValue) },
-                set: { c in bind(key).wrappedValue = NSColor(c).usingColorSpace(.sRGB) ?? .white })
+    /// Font size in whole pixels, whether set by slider, arrows or typing.
+    private var sizeBinding: Binding<Double> {
+        Binding(get: { Double(bind(\.size).wrappedValue) },
+                set: { v in bind(\.size).wrappedValue = CGFloat(min(400, max(8, v.rounded()))) })
     }
 
     var body: some View {
@@ -594,13 +605,18 @@ struct TextPanel: View {
                     }
                     Divider().frame(height: 18)
                     Text("Size").font(.system(size: 11)).foregroundColor(Theme.textSecondary)
-                    Slider(value: bind(\.size), in: 16...400).frame(width: 120)
-                    Stepper(value: bind(\.size), in: 16...400, step: 2) {
-                        Text("\(Int(t.size)) px").font(.system(size: 11, design: .monospaced)).frame(width: 52, alignment: .trailing)
-                    }
+                    Slider(value: sizeBinding, in: 8...400, step: 1).frame(width: 110)
+                    TextField("", value: sizeBinding, formatter: Self.sizeFormatter)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 12, design: .monospaced))
+                        .multilineTextAlignment(.trailing)
+                        .frame(width: 52)
+                        .help("Type a size and press Return")
+                    Stepper("", value: sizeBinding, in: 8...400, step: 1).labelsHidden().help("One pixel bigger or smaller")
+                    Text("px").font(.system(size: 11)).foregroundColor(Theme.textSecondary)
                     Toggle(isOn: bind(\.bold)) { Image(systemName: "bold") }.toggleStyle(.button).help("Bold")
                     Toggle(isOn: bind(\.italic)) { Image(systemName: "italic") }.toggleStyle(.button).help("Italic")
-                    ColorPicker("", selection: colour(\.color), supportsOpacity: true).labelsHidden().help("Text colour")
+                    SimpleColorPicker(color: bind(\.color), help: "Text colour")
                     Picker("", selection: bind(\.alignment)) {
                         Image(systemName: "text.alignleft").tag(MergeText.Alignment.left)
                         Image(systemName: "text.aligncenter").tag(MergeText.Alignment.center)
@@ -614,13 +630,11 @@ struct TextPanel: View {
                 }
                 HStack(spacing: 10) {
                     Toggle("Outline", isOn: bind(\.outline))
-                    ColorPicker("", selection: colour(\.outlineColor), supportsOpacity: false).labelsHidden()
-                        .disabled(!t.outline).help("Outline colour")
+                    SimpleColorPicker(color: bind(\.outlineColor), help: "Outline colour").disabled(!t.outline)
                     Toggle("Shadow", isOn: bind(\.shadow))
                     Divider().frame(height: 18)
                     Toggle("Background box", isOn: bind(\.box))
-                    ColorPicker("", selection: colour(\.boxColor), supportsOpacity: false).labelsHidden()
-                        .disabled(!t.box).help("Box colour")
+                    SimpleColorPicker(color: bind(\.boxColor), help: "Box colour").disabled(!t.box)
                     Text("Opacity").font(.system(size: 11)).foregroundColor(Theme.textSecondary)
                     Slider(value: bind(\.boxOpacity), in: 0.1...1).frame(width: 110).disabled(!t.box)
                     Text("\(Int(t.boxOpacity * 100))%").font(.system(size: 11, design: .monospaced)).frame(width: 40)

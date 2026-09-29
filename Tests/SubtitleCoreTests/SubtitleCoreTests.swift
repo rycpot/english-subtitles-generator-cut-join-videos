@@ -621,3 +621,18 @@ final class MergeLayoutTests: XCTestCase {
         XCTAssertFalse(spec.ffmpegArguments.contains("-ac"), "stereo stays as it is")
     }
 }
+
+final class HexColorTests: XCTestCase {
+    func testParseAndFormat() {
+        let c = HexColor.parse("#ff6a00")!
+        XCTAssertEqual(c.r, 1)
+        XCTAssertEqual(c.g, 106.0 / 255, accuracy: 1e-9)
+        XCTAssertEqual(c.b, 0)
+        XCTAssertEqual(HexColor.format(r: c.r, g: c.g, b: c.b), "#FF6A00")
+        XCTAssertEqual(HexColor.format(r: 1, g: 1, b: 1), "#FFFFFF")
+        XCTAssertNotNil(HexColor.parse(" 0f8 "))
+        XCTAssertEqual(HexColor.format(r: HexColor.parse("0f8")!.r, g: HexColor.parse("0f8")!.g, b: HexColor.parse("0f8")!.b), "#00FF88")
+        XCTAssertNil(HexColor.parse("#12345"))
+        XCTAssertNil(HexColor.parse("GGGGGG"))
+    }
+}

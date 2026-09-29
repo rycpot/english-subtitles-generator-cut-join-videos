@@ -235,3 +235,20 @@ public struct MergeSpec: Equatable {
         return args
     }
 }
+
+/// "#FF6A00" ⇄ RGB (0…1), for the colour picker's hex field.
+public enum HexColor {
+    /// Accepts "#RGB", "RGB", "#RRGGBB" or "RRGGBB" (any case, spaces ignored).
+    public static func parse(_ text: String) -> (r: Double, g: Double, b: Double)? {
+        var s = text.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        if s.hasPrefix("#") { s.removeFirst() }
+        if s.count == 3 { s = s.map { "\($0)\($0)" }.joined() }
+        guard s.count == 6, let v = UInt32(s, radix: 16) else { return nil }
+        return (Double((v >> 16) & 0xFF) / 255, Double((v >> 8) & 0xFF) / 255, Double(v & 0xFF) / 255)
+    }
+
+    public static func format(r: Double, g: Double, b: Double) -> String {
+        func byte(_ x: Double) -> Int { Int((min(1, max(0, x)) * 255).rounded()) }
+        return String(format: "#%02X%02X%02X", byte(r), byte(g), byte(b))
+    }
+}
