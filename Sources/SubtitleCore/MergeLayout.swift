@@ -16,6 +16,12 @@ public enum CanvasSnap {
         /// Where to draw the vertical / horizontal guide, if something snapped.
         public var guideX: CGFloat?
         public var guideY: CGFloat?
+
+        public init(rect: CGRect, guideX: CGFloat? = nil, guideY: CGFloat? = nil) {
+            self.rect = rect
+            self.guideX = guideX
+            self.guideY = guideY
+        }
     }
 
     /// The closest of `edges` to any of `targets` within `threshold`: (shift, target).
