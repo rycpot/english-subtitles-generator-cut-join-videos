@@ -5,6 +5,21 @@ import UniformTypeIdentifiers
 
 // MARK: - Shared pieces
 
+/// A standard Open panel. SwiftUI's fileImporter is avoided: on macOS 12 only
+/// one of several in a window opens (the Subtitles tab, drop areas and the
+/// font upload each had one), so buttons silently did nothing.
+@MainActor
+func chooseFiles(_ types: [UTType], multiple: Bool, title: String, prompt: String = "Choose") -> [URL] {
+    let panel = NSOpenPanel()
+    panel.title = title
+    panel.prompt = prompt
+    panel.allowedContentTypes = types
+    panel.allowsMultipleSelection = multiple
+    panel.canChooseDirectories = false
+    panel.canChooseFiles = true
+    return panel.runModal() == .OK ? panel.urls : []
+}
+
 /// Loads file URLs from a drop and hands them over together once all are read,
 /// so files dropped in one go can be sorted as a group.
 func loadDroppedURLs(_ providers: [NSItemProvider], _ handle: @escaping ([URL]) -> Void) -> Bool {
@@ -39,7 +54,6 @@ struct SmallDropArea: View {
     var types: [UTType] = [.movie, .audiovisualContent]
     let onFiles: ([URL]) -> Void
     @State private var isTargeted = false
-    @State private var showImporter = false
 
     var body: some View {
         HStack(spacing: 12) {
@@ -49,7 +63,10 @@ struct SmallDropArea: View {
             Text(title)
                 .font(.system(size: 13, weight: .medium))
             Spacer()
-            Button(allowsMultiple ? "Choose Files…" : "Choose File…") { showImporter = true }
+            Button(allowsMultiple ? "Choose Files…" : "Choose File…") {
+                let urls = chooseFiles(types, multiple: allowsMultiple, title: title)
+                if !urls.isEmpty { onFiles(urls) }
+            }
                 .buttonStyle(.pillProminent)
         }
         .padding(14)
@@ -59,10 +76,6 @@ struct SmallDropArea: View {
             .foregroundColor(isTargeted ? Theme.mint : Theme.border))
         .onDrop(of: [UTType.fileURL], isTargeted: $isTargeted) { providers in
             loadDroppedURLs(providers, onFiles)
-        }
-        .fileImporter(isPresented: $showImporter, allowedContentTypes: types,
-                      allowsMultipleSelection: allowsMultiple) { result in
-            if case .success(let urls) = result { onFiles(urls) }
         }
     }
 }

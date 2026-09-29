@@ -28,7 +28,6 @@ struct ContentView: View {
     @StateObject private var merge = MergeModel()
     @AppStorage("selectedTab") private var tab: AppTab = .subtitles
     @State private var isTargeted = false
-    @State private var showImporter = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -67,10 +66,6 @@ struct ContentView: View {
                 TrackPickerView(request: request).environmentObject(queue)
             }
         }
-        .fileImporter(isPresented: $showImporter, allowedContentTypes: [.movie, .audio],
-                      allowsMultipleSelection: true) { result in
-            if case .success(let urls) = result { queue.add(urls) }
-        }
     }
 
     private var dropZone: some View {
@@ -90,7 +85,12 @@ struct ContentView: View {
                     .font(.system(size: 11))
                     .foregroundColor(Theme.textSecondary)
                     .multilineTextAlignment(.center)
-                Button("Choose Files…") { showImporter = true }
+                Button("Choose Files…") {
+                    let urls = chooseFiles([.movie, .audio, .audiovisualContent], multiple: true, title: "Choose Movies")
+                    if !urls.isEmpty {
+                        queue.add(urls.sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending })
+                    }
+                }
                     .buttonStyle(.pillProminent)
                     .padding(.top, 2)
             }

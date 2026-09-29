@@ -530,9 +530,15 @@ struct MergeCanvasEditor: View {
 /// outline, shadow, background box and which pictures it shows on.
 struct TextPanel: View {
     @ObservedObject var model: MergeModel
-    @State private var showFontImporter = false
 
     private static let systemFamilies = NSFontManager.shared.availableFontFamilies.sorted()
+
+    /// A standard Open panel for font files. (SwiftUI's fileImporter doesn't
+    /// open on macOS 12 when the screen already has one, like the drop area's.)
+    private func chooseFonts() {
+        let urls = chooseFiles([.font], multiple: true, title: "Upload Font", prompt: "Add Font")
+        if !urls.isEmpty { model.addFonts(urls) }
+    }
 
     private func bind<T>(_ key: WritableKeyPath<MergeText, T>) -> Binding<T> {
         Binding(get: { model.texts[safe: model.selectedTextIndex ?? -1]?[keyPath: key] ?? MergeText()[keyPath: key] },
@@ -579,7 +585,7 @@ struct TextPanel: View {
                         }
                     }
                     .frame(width: 240)
-                    Button("Upload Font…") { showFontImporter = true }
+                    Button("Upload Font…") { chooseFonts() }
                         .buttonStyle(.pillSmall)
                         .help("Add a .ttf, .otf or .ttc font; it stays available next time")
                     if model.customFamilies.contains(t.fontFamily) {
@@ -624,9 +630,6 @@ struct TextPanel: View {
             .font(.system(size: 12))
             .padding(10)
             .background(RoundedRectangle(cornerRadius: 10).fill(Theme.surfaceRaised))
-            .fileImporter(isPresented: $showFontImporter, allowedContentTypes: [.font], allowsMultipleSelection: true) { result in
-                if case .success(let urls) = result { model.addFonts(urls) }
-            }
             .disabled(model.isRunning)
         }
     }
