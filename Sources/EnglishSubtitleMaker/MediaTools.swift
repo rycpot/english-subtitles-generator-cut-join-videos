@@ -381,6 +381,14 @@ final class MediaTools {
         return "\(max(1, s)) s"
     }
 
+    /// Makes the Merge video: pictures shown over the audio, as a YouTube-ready
+    /// 1080p H.264 .mp4, with live progress and the time left.
+    func merge(_ spec: MergeSpec) async throws {
+        progress(0.02, "Encoding the video…")
+        try await run(spec.ffmpegArguments, failure: .joinFailed,
+                      report: reporter("Encoding the video…", from: 0, to: spec.audioLength, progress: 0.02...0.99))
+    }
+
     /// Copies one audio track of `piece` unchanged into `output` (its type
     /// chosen by `AudioFiles.fileExtension`). Accurate to one audio frame
     /// (a few hundredths of a second): the input is opened 10 s early, as a

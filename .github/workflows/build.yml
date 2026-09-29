@@ -137,6 +137,8 @@ jobs:
           arch -x86_64 "$FF" -hide_banner -loglevel error -y -f lavfi -i "testsrc2=s=1280x720:r=24000/1001:d=30" \
             -f lavfi -i "sine=f=500:d=30" -c:v libx265 -preset ultrafast -pix_fmt yuv420p10le \
             -x265-params keyint=48:log-level=error -c:a ac3 -ac 6 "$T/hevc10.mkv"
+          # A 4:3 picture for the Merge test.
+          arch -x86_64 "$FF" -hide_banner -loglevel error -y -f lavfi -i "testsrc2=s=1600x1200" -frames:v 1 "$T/photo.png"
           arch -x86_64 "$APP/Contents/MacOS/EnglishSubtitleMaker" --selftest-tools "$T" | tee tools.log
           grep -q "^TOOLS OK$" tools.log
 

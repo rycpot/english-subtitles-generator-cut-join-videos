@@ -36,6 +36,7 @@ func loadDroppedURLs(_ providers: [NSItemProvider], _ handle: @escaping ([URL]) 
 struct SmallDropArea: View {
     let title: String
     let allowsMultiple: Bool
+    var types: [UTType] = [.movie, .audiovisualContent]
     let onFiles: ([URL]) -> Void
     @State private var isTargeted = false
     @State private var showImporter = false
@@ -59,7 +60,7 @@ struct SmallDropArea: View {
         .onDrop(of: [UTType.fileURL], isTargeted: $isTargeted) { providers in
             loadDroppedURLs(providers, onFiles)
         }
-        .fileImporter(isPresented: $showImporter, allowedContentTypes: [.movie, .audiovisualContent],
+        .fileImporter(isPresented: $showImporter, allowedContentTypes: types,
                       allowsMultipleSelection: allowsMultiple) { result in
             if case .success(let urls) = result { onFiles(urls) }
         }
@@ -339,6 +340,8 @@ struct ToolProgress: View {
 
 struct CutterView: View {
     @ObservedObject var model: CutterModel
+    /// Hands an audio-only cut to the Merge tab: (temporary file, folder and name for the video).
+    var sendToMerge: ((URL, URL, String) -> Void)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -379,6 +382,14 @@ struct CutterView: View {
                         .font(.system(size: 11))
                         .foregroundColor(Theme.textSecondary)
                     Spacer()
+                    if model.output == .audio, let sendToMerge {
+                        Button("Send to Merge") { model.sendToMerge(sendToMerge) }
+                            .buttonStyle(.pill)
+                            .disabled(model.isRunning || model.info == nil || !canRun || model.splitKind != .none)
+                            .help(model.splitKind != .none
+                                  ? "Choose \"Don't split\" to send one piece of audio to Merge"
+                                  : "Cut this audio into Merge without saving a file here")
+                    }
                     Button(model.splitKind == .none ? "Cut" : "Cut and Split") { model.run() }
                         .buttonStyle(.pillProminent)
                         .disabled(model.isRunning || model.info == nil || !canRun)

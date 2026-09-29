@@ -7,6 +7,7 @@ enum AppTab: String, CaseIterable, Identifiable {
     case subtitles = "Subtitles"
     case cutter = "Cutter"
     case joiner = "Joiner"
+    case merge = "Merge"
     var id: String { rawValue }
 
     var icon: String {
@@ -14,6 +15,7 @@ enum AppTab: String, CaseIterable, Identifiable {
         case .subtitles: return "captions.bubble"
         case .cutter: return "scissors"
         case .joiner: return "rectangle.stack.badge.plus"
+        case .merge: return "photo.on.rectangle.angled"
         }
     }
 }
@@ -23,6 +25,7 @@ struct ContentView: View {
     @EnvironmentObject var queue: JobQueue
     @StateObject private var cutter = CutterModel()
     @StateObject private var joiner = JoinerModel()
+    @StateObject private var merge = MergeModel()
     @AppStorage("selectedTab") private var tab: AppTab = .subtitles
     @State private var isTargeted = false
     @State private var showImporter = false
@@ -30,7 +33,8 @@ struct ContentView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Header()
-            TabBar(selection: $tab, busy: [.subtitles: queue.isRunning, .cutter: cutter.isRunning, .joiner: joiner.isRunning])
+            TabBar(selection: $tab, busy: [.subtitles: queue.isRunning, .cutter: cutter.isRunning, .joiner: joiner.isRunning,
+                                            .merge: merge.isRunning])
             switch tab {
             case .subtitles:
                 APIKeyBar()
@@ -38,9 +42,14 @@ struct ContentView: View {
                 if !queue.jobs.isEmpty { jobList }
                 progressSection
             case .cutter:
-                CutterView(model: cutter)
+                CutterView(model: cutter) { url, folder, base in
+                    merge.setAudio(url, folder: folder, base: base)
+                    tab = .merge
+                }
             case .joiner:
                 JoinerView(model: joiner)
+            case .merge:
+                MergeView(model: merge)
             }
             LogView(channel: tab)
                 .id(tab)

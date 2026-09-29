@@ -255,6 +255,32 @@ final class CutterModel: ToolModel {
     }
 }
 
+extension CutterModel {
+    /// Cuts the audio-only range into a temporary file and hands it to Merge;
+    /// nothing is saved next to the original.
+    func sendToMerge(_ handoff: @escaping (URL, URL, String) -> Void) {
+        guard output == .audio, let file, let info, let audio = chosenAudio,
+              case .success(let ranges) = plannedRanges, ranges.count == 1, let r = ranges.first else { return }
+        let base = file.deletingPathExtension().lastPathComponent
+        let name = "\(base) [\(TimeCode.fileSafe(r.start))–\(TimeCode.fileSafe(r.end))]"
+        let folder = file.deletingLastPathComponent()
+        let ext = AudioFiles.fileExtension(forCodec: audio.codecName)
+        start("Sending the audio (\(audio.audioLabel)) of \(file.lastPathComponent) "
+              + "\(TimeCode.format(r.start))–\(TimeCode.format(r.end)) to Merge") { tools in
+            let dir = AppPaths.cache.appendingPathComponent("to-merge-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let out = dir.appendingPathComponent("\(name).\(ext)")
+            try await tools.extractAudio(MediaPiece(url: file, probe: info, start: r.start, end: r.end),
+                                         streamIndex: audio.index, to: out)
+            await MainActor.run {
+                self.log(.success, "✓ Sent to the Merge tab (the video will be saved next to \(file.lastPathComponent)).")
+                handoff(out, folder, name)
+            }
+            return []
+        }
+    }
+}
+
 /// One entry in the Joiner: a whole file or a range of it.
 struct JoinPiece: Identifiable {
     let id = UUID()

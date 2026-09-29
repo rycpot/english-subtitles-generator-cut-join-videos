@@ -210,6 +210,37 @@ enum SelfTest {
                     if !ok { failures += 1 }
                 }
 
+                // 10. Merge: two pictures (one cropped and filling the canvas) over 12 s of
+                //     audio with fades and loudness evening → YouTube-ready 1080p H.264.
+                let photo = folder.appendingPathComponent("photo.png")
+                guard let img = MergeSlide.load(photo) else { throw SubtitleError(.unexpected, "photo.png unreadable") }
+                let aspect = CGFloat(img.width) / CGFloat(img.height)
+                let crop = CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5)
+                let slides = [MergeSlide(url: photo, image: img, frame: CanvasSnap.fit(aspect: aspect)),
+                              MergeSlide(url: photo, image: img, crop: crop, frame: CanvasSnap.fill(aspect: aspect))]
+                var slideFiles: [String] = []
+                for (k, slide) in slides.enumerated() {
+                    guard let frame = MergeRenderer.frame(slide, background: CGColor(red: 0, green: 0, blue: 0.4, alpha: 1)) else {
+                        throw SubtitleError(.unexpected, "could not draw slide \(k + 1)")
+                    }
+                    let file = out.appendingPathComponent("slide\(k).png")
+                    try MergeRenderer.writePNG(frame, to: file)
+                    slideFiles.append(file.path)
+                }
+                let merged = out.appendingPathComponent("merged.mp4")
+                try await tools.merge(MergeSpec(slides: [.init(file: slideFiles[0], length: 5), .init(file: slideFiles[1], length: 7)],
+                                                audio: src.path, audioStart: 10, audioLength: 12, fadeIn: 1, fadeOut: 1,
+                                                normalize: true, copyAudio: false, output: merged.path))
+                let mp = try await tools.probe(merged)
+                let mv = mp.video, ma = mp.audio.first
+                let formatOK = mv?.codecName == "h264" && mv?.width == 1920 && mv?.height == 1080 && mv?.pixFmt == "yuv420p"
+                    && abs((mp.frameRate ?? 0) - 30) < 0.01 && ma?.codecName == "aac" && ma?.sampleRate == "48000"
+                    && abs(mp.duration - 12) < 0.1
+                print(formatOK ? "PASS merge makes 1080p30 H.264 + 48 kHz AAC, 12 s"
+                               : "FAIL merge format: \(mp.formatSummary), \(ma?.codecName ?? "no audio") \(ma?.sampleRate ?? ""), \(mp.duration) s")
+                if !formatOK { failures += 1 }
+                try await check("merge frames", merged, frames: 360, tolerance: 1)
+
                 // The quick cut must not have fallen back to full re-encoding anywhere.
                 let fell = fallbacks.count
                 print(fell == 0 ? "PASS quick cut used throughout" : "FAIL quick cut fell back \(fell) time(s)")

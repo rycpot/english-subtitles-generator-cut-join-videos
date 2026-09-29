@@ -41,13 +41,21 @@ As published by Groq when this was written; they may change:
 
 ## Cutter and Joiner
 
-Two more tabs use the bundled ffmpeg to cut and join videos **without changing their quality**.
+Three more tabs use the bundled ffmpeg: cut and join videos **without changing their quality**, and merge audio with pictures into a video.
 
 **Cutter:** drop a video, pick a start time and either an end time or a length ("from 00:20:00, 00:02:00 long") from the hours : minutes : seconds · frame dropdowns. They only offer times inside the video (hours are greyed out for videos under an hour), and the frame dropdown picks an exact frame within the second. End and length start at zero: **To end** fills in the video's last point, and in Duration mode tiny presets (5s … 5m) set common lengths. Right-click the dropdowns to copy or paste a time. Stills of the first and last frame show exactly what you will get. Optionally split the cut **into N equal parts** or **into parts of a fixed length** (the last part may be shorter). Results are saved next to the original, e.g. `Movie [00.20.00–00.22.00].mkv` or `Movie [00.20.00–00.22.00] part 1 of 4.mkv`.
 
 **Audio only:** switch the Cutter from **Video + audio** to **Audio only** to save just one audio track for the range (and its parts), copied unchanged: AAC as `.m4a`, AC3/E-AC3 as `.ac3`/`.eac3`, MP3, FLAC, Opus as themselves, anything else (DTS, TrueHD…) as `.mka`. Files with several tracks show a track picker. E.g. `Movie [00.20.00–00.22.00] audio.m4a`.
 
 **Joiner:** drop one or more videos. Each piece is either the **whole file** or a **cut** of it; the ⧉ button adds another cut from the same file. Files dropped together are added in natural name order ("part 2" before "part 10"). Re-sort the list any time by **Name (natural)**, **Date modified** or **Duration** (the ↑/↓ button flips the direction), or reorder pieces by dragging or with the arrows; they are joined in the order shown into `Joined <date> <time>.<ext>` next to the first file.
+
+**Merge:** turn audio and pictures into a **YouTube-ready 1080p H.264 .mp4** (High profile, 30 fps, BT.709, keyframe every 2 s, 48 kHz AAC, moov first; still-image encoding, so an hour of audio takes minutes).
+- Drop an audio file (or a video, for its audio) and one or more pictures. Use the whole audio or a **part** of it (the same time dropdowns as the Cutter).
+- **Canvas (1920 × 1080)**, after the design editor: drag the picture (it sticks to the canvas edges and centre lines, with a pink guide; hold **⌥** to move freely), resize from the corners with its proportions kept, **Crop** its edges, **Fit** or **Fill** in one click, pick a **background colour** for any uncovered area, and zoom (buttons or pinch).
+- **Slideshow:** several pictures split the audio equally; give any of them a set time and the others share the rest. Reorder with the arrows.
+- **Options:** fade in/out from and to black (with the sound), and evening out the loudness to YouTube's -14 LUFS.
+- **From the Cutter:** with **Audio only** chosen, **Send to Merge** cuts the audio straight into the Merge tab without saving a file; the video is then saved next to the original.
+- Saved next to the audio as `<audio name>.mp4`.
 
 **How the quality is kept (smart cut):** a video can only be cut cleanly at keyframes (every few seconds). For H.264 and HEVC (H.265, 8- or 10-bit) videos the app copies everything between the first and last keyframe of each piece **bit for bit**, and re-encodes only the few frames before the first and after the last keyframe at very high quality. Cuts are exact to the frame, and more than 95% of the video is usually untouched. Audio and subtitle tracks are copied unchanged (all of them, with their languages), and chapters and the title are kept and adjusted.
 

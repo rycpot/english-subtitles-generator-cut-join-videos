@@ -540,3 +540,77 @@ final class JoinSorterTests: XCTestCase {
         XCTAssertEqual(JoinSorter.order(items, by: .duration, ascending: false), [3, 0, 2, 1])
     }
 }
+
+final class MergeLayoutTests: XCTestCase {
+    let canvas = MergeCanvas.size
+
+    func testDragSnapsToEdgesAndCentre() {
+        // Left edge 6 px from the canvas edge: sticks to it.
+        let r = CanvasSnap.drag(CGRect(x: 6, y: 300, width: 800, height: 450), threshold: 8)
+        XCTAssertEqual(r.rect.minX, 0)
+        XCTAssertEqual(r.guideX, 0)
+        XCTAssertNil(r.guideY)
+        // Centre 5 px off the middle line: centred.
+        let c = CanvasSnap.drag(CGRect(x: 555, y: 100, width: 800, height: 450), threshold: 8)
+        XCTAssertEqual(c.rect.midX, 960)
+        // Far from every line: left alone.
+        let free = CanvasSnap.drag(CGRect(x: 300, y: 200, width: 800, height: 450), threshold: 8)
+        XCTAssertEqual(free.rect, CGRect(x: 300, y: 200, width: 800, height: 450))
+        XCTAssertNil(free.guideX)
+    }
+
+    func testCornerResizeKeepsProportionsAndSnaps() {
+        // 16:9 image anchored top-left at 0,0; dragged corner near the right edge.
+        let r = CanvasSnap.resize(anchor: .zero, to: CGPoint(x: 1914, y: 700), aspect: 16.0 / 9, threshold: 8)
+        XCTAssertEqual(r.rect.width, 1920, accuracy: 0.001)
+        XCTAssertEqual(r.rect.height, 1080, accuracy: 0.001)
+        XCTAssertTrue(r.guideX == 1920 || r.guideY == 1080, "snapped to the right or bottom edge")
+        // Dragging up-left from a bottom-right anchor.
+        let u = CanvasSnap.resize(anchor: CGPoint(x: 1000, y: 800), to: CGPoint(x: 600, y: 700), aspect: 2, threshold: 8, snap: false)
+        XCTAssertEqual(u.rect, CGRect(x: 600, y: 600, width: 400, height: 200))
+    }
+
+    func testFitAndFill() {
+        XCTAssertEqual(CanvasSnap.fit(aspect: 1), CGRect(x: 420, y: 0, width: 1080, height: 1080))
+        XCTAssertEqual(CanvasSnap.fill(aspect: 1), CGRect(x: 0, y: -420, width: 1920, height: 1920))
+    }
+
+    func testCropRoundTripsAndStaysInside() {
+        let crop = CGRect(x: 0.25, y: 0.1, width: 0.5, height: 0.8)
+        let visible = CGRect(x: 100, y: 50, width: 600, height: 400)
+        let full = CropMath.fullFrame(visible: visible, crop: crop)
+        XCTAssertEqual(CropMath.visibleFrame(full: full, crop: crop), visible)
+        let moved = CropMath.drag(crop, handle: .topLeft, by: CGVector(dx: -0.5, dy: -0.5))
+        XCTAssertEqual(moved.minX, 0)
+        XCTAssertEqual(moved.minY, 0)
+        XCTAssertEqual(moved.maxX, 0.75, accuracy: 1e-9)
+        let tiny = CropMath.drag(crop, handle: .right, by: CGVector(dx: -1, dy: 0))
+        XCTAssertEqual(tiny.width, 0.05, accuracy: 1e-9)
+    }
+
+    func testSlideLengths() {
+        XCTAssertEqual(SlideTimes.lengths(total: 90, fixed: [nil, nil, nil]), [30, 30, 30])
+        XCTAssertEqual(SlideTimes.lengths(total: 90, fixed: [10, nil, nil]), [10, 40, 40])
+        XCTAssertEqual(SlideTimes.lengths(total: 90, fixed: [10, 20]), [10, 80], "the last slide takes what is left")
+        XCTAssertNil(SlideTimes.lengths(total: 20, fixed: [15, 10, nil]))
+    }
+
+    func testMergeCommand() {
+        let spec = MergeSpec(slides: [.init(file: "a.png", length: 6), .init(file: "b.png", length: 4)],
+                             audio: "song.flac", audioStart: 5, audioLength: 10, fadeIn: 1, fadeOut: 1,
+                             normalize: true, copyAudio: false, output: "out.mp4")
+        let args = spec.ffmpegArguments
+        let graph = args[args.firstIndex(of: "-filter_complex")! + 1]
+        XCTAssertTrue(graph.hasPrefix("[0:v][1:v]concat=n=2:v=1:a=0,"))
+        XCTAssertTrue(graph.contains("fade=t=out:st=9.000:d=1.000"))
+        XCTAssertTrue(graph.contains("[2:a:0]loudnorm=I=-14"))
+        XCTAssertTrue(args.contains("stillimage"))
+        XCTAssertEqual(args.last, "out.mp4")
+        var copy = spec
+        copy.copyAudio = true
+        copy.fadeIn = 0
+        copy.fadeOut = 0
+        XCTAssertTrue(copy.ffmpegArguments.contains("2:a:0"))
+        XCTAssertFalse(copy.ffmpegArguments.joined(separator: " ").contains("afade"))
+    }
+}
