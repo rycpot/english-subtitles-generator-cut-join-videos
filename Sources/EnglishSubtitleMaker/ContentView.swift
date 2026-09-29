@@ -53,7 +53,8 @@ struct ContentView: View {
             }
             LogView(channel: tab)
                 .id(tab)
-                .frame(minHeight: 120)
+                // Merge needs the room for its canvas: about six log lines.
+                .frame(minHeight: tab == .merge ? 150 : 120, maxHeight: tab == .merge ? 150 : .infinity)
         }
         .padding(18)
         .frame(minWidth: 760, minHeight: 760)

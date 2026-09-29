@@ -91,6 +91,8 @@ final class MergeModel: ToolModel {
     @Published var fadeOut = false
     @Published var fadeSeconds = 1.0
     @Published var normalize = false
+    /// Earlier states of the pictures (placement, crop, order, times) for Undo.
+    @Published private(set) var undoStack: [[MergeSlide]] = []
 
     init() {
         super.init(status: "Add an audio file and one or more images, then click Merge.", channel: .merge)
@@ -122,7 +124,7 @@ final class MergeModel: ToolModel {
         wholeAudio = true
         fields = RangeFields()
         Task {
-            audioInfo = await probe(url)
+            audioInfo = await probe(url, requireVideo: false)
             if let info = audioInfo {
                 if info.audio.isEmpty { log(.error, "\(url.lastPathComponent) has no audio track.") }
                 status = "\(url.lastPathComponent): \(TimeCode.format(info.duration)) of audio."
@@ -131,6 +133,7 @@ final class MergeModel: ToolModel {
     }
 
     func addImages(_ urls: [URL]) {
+        if !urls.isEmpty { checkpoint() }
         for url in urls {
             guard let image = MergeSlide.load(url) else {
                 log(.warning, "Could not read the picture \(url.lastPathComponent).")
@@ -144,6 +147,7 @@ final class MergeModel: ToolModel {
     }
 
     func remove(_ id: UUID) {
+        checkpoint()
         slides.removeAll { $0.id == id }
         if selected == id { selected = slides.first?.id }
     }
@@ -152,7 +156,22 @@ final class MergeModel: ToolModel {
         guard let i = slides.firstIndex(where: { $0.id == id }) else { return }
         let j = i + offset
         guard slides.indices.contains(j) else { return }
+        checkpoint()
         slides.swapAt(i, j)
+    }
+
+    // MARK: Undo
+
+    /// Remembers the pictures as they are now, before a change.
+    func checkpoint() {
+        undoStack.append(slides)
+        if undoStack.count > 200 { undoStack.removeFirst(undoStack.count - 200) }
+    }
+
+    func undo() {
+        guard let previous = undoStack.popLast() else { return }
+        slides = previous
+        if !slides.contains(where: { $0.id == selected }) { selected = slides.first?.id }
     }
 
     // MARK: Editing the selected picture
@@ -161,6 +180,7 @@ final class MergeModel: ToolModel {
 
     func updateSelected(_ change: (inout MergeSlide) -> Void) {
         guard let i = selectedIndex else { return }
+        checkpoint()
         change(&slides[i])
     }
 

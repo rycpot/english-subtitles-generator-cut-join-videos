@@ -249,6 +249,11 @@ struct MergeCanvasEditor: View {
 
     private var toolbar: some View {
         HStack(spacing: 8) {
+            Button { model.undo() } label: { Label("Undo", systemImage: "arrow.uturn.backward") }
+                .buttonStyle(.pillSmall)
+                .keyboardShortcut("z", modifiers: .command)
+                .disabled(model.undoStack.isEmpty)
+                .help("Undo the last change to the pictures (⌘Z)")
             Button("Fit") { place(fill: false) }.buttonStyle(.pillSmall)
                 .help("Show the whole picture, centred")
             Button("Fill") { place(fill: true) }.buttonStyle(.pillSmall)
@@ -342,6 +347,7 @@ struct MergeCanvasEditor: View {
     private func moveGesture(_ i: Int) -> some Gesture {
         DragGesture(minimumDistance: 1)
             .onChanged { v in
+                if dragStart == nil { model.checkpoint() }
                 let start = dragStart ?? model.slides[i].frame
                 dragStart = start
                 let moved = start.offsetBy(dx: v.translation.width / scale, dy: v.translation.height / scale)
@@ -371,6 +377,7 @@ struct MergeCanvasEditor: View {
                     .offset(x: corner.x * scale - 5, y: corner.y * scale - 5)
                     .gesture(DragGesture(minimumDistance: 0)
                         .onChanged { v in
+                            if dragStart == nil { model.checkpoint() }
                             let start = dragStart ?? model.slides[i].frame
                             dragStart = start
                             let startCorners = [CGPoint(x: start.minX, y: start.minY), CGPoint(x: start.maxX, y: start.minY),
@@ -444,6 +451,7 @@ struct MergeCanvasEditor: View {
                     .gesture(DragGesture(minimumDistance: 0)
                         .onChanged { v in
                             guard let full = cropFull else { return }
+                            if cropStart == nil { model.checkpoint() }
                             let start = cropStart ?? model.slides[i].crop
                             cropStart = start
                             let delta = CGVector(dx: v.translation.width / scale / full.width,

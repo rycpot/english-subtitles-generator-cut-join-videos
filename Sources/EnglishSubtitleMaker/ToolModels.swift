@@ -82,9 +82,9 @@ class ToolModel: ObservableObject {
     }
 
     /// Probes a file for the editors (length, format), logging problems.
-    func probe(_ url: URL) async -> ProbeResult? {
+    func probe(_ url: URL, requireVideo: Bool = true) async -> ProbeResult? {
         do {
-            return try await makeTools().probe(url)
+            return try await makeTools().probe(url, requireVideo: requireVideo)
         } catch let error as SubtitleError {
             log(.error, "✗ \(error.description)")
             return nil

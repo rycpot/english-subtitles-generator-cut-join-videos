@@ -52,13 +52,15 @@ final class MediaTools {
 
     // MARK: Reading files
 
-    func probe(_ url: URL) async throws -> ProbeResult {
+    /// Reads a file's streams. Cutter and Joiner need a video track; Merge
+    /// reads plain audio files too (`requireVideo: false`).
+    func probe(_ url: URL, requireVideo: Bool = true) async throws -> ProbeResult {
         let result = try await tool(ffprobe, ["-v", "error", "-show_streams", "-show_format", "-show_chapters",
                                               "-of", "json", url.path])
         guard result.status == 0, let probe = try? ProbeResult.decode(Data(result.stdout.utf8)) else {
             throw SubtitleError(.mediaUnreadable, "\(url.lastPathComponent): \(result.stderrTail)")
         }
-        guard probe.video != nil else { throw SubtitleError(.mediaUnreadable, "\(url.lastPathComponent) has no video") }
+        if requireVideo, probe.video == nil { throw SubtitleError(.mediaUnreadable, "\(url.lastPathComponent) has no video") }
         return probe
     }
 

@@ -208,6 +208,10 @@ enum SelfTest {
                     let ok = abs(length - 7.2) < 0.06
                     print("\(ok ? "PASS" : "FAIL") audio only, \(name): \(String(format: "%.3f", length)) s, expected 7.200")
                     if !ok { failures += 1 }
+                    // Merge must accept the audio-only file (Cutter → Send to Merge).
+                    let readable = (try? await tools.probe(a, requireVideo: false))?.audio.isEmpty == false
+                    print(readable ? "PASS Merge reads the \(ext) audio file" : "FAIL Merge can't read the \(ext) audio file")
+                    if !readable { failures += 1 }
                 }
 
                 // 10. Merge: two pictures (one cropped and filling the canvas) over 12 s of
