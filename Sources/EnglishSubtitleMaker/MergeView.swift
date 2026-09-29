@@ -631,6 +631,8 @@ struct TextPanel: View {
                 HStack(spacing: 10) {
                     Toggle("Outline", isOn: bind(\.outline))
                     SimpleColorPicker(color: bind(\.outlineColor), help: "Outline colour").disabled(!t.outline)
+                    Slider(value: bind(\.outlineWidth), in: 0.01...0.15).frame(width: 90).disabled(!t.outline)
+                        .help("Outline thickness")
                     Toggle("Shadow", isOn: bind(\.shadow))
                     Divider().frame(height: 18)
                     Toggle("Background box", isOn: bind(\.box))

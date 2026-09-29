@@ -278,6 +278,24 @@ enum SelfTest {
                 }
                 print(textOK ? "PASS text box drawn into the frame" : "FAIL text box not drawn where expected")
                 if !textOK { failures += 1 }
+                // The outline stays outside the letters: the middle of a thick "I" keeps
+                // the text colour (red), not the outline colour (white).
+                let outlineOK: Bool = await MainActor.run {
+                    var t = MergeText()
+                    t.text = "I"
+                    t.fontFamily = "Helvetica Neue"
+                    t.size = 300
+                    t.color = NSColor(srgbRed: 1, green: 0, blue: 0, alpha: 1)
+                    t.outline = true
+                    t.outlineColor = .white
+                    t.outlineWidth = 0.1
+                    t.shadow = false
+                    guard let r = TextRenderer.render(t) else { return false }
+                    let p = Self.pixel(r.image, x: r.image.width / 2, y: r.image.height / 2)
+                    return p.r > 200 && p.g < 60 && p.b < 60
+                }
+                print(outlineOK ? "PASS outline stays outside the letters" : "FAIL outline covers the text colour")
+                if !outlineOK { failures += 1 }
                 let fontFile = URL(fileURLWithPath: "/System/Library/Fonts/Supplemental/Courier New.ttf")
                 if FileManager.default.fileExists(atPath: fontFile.path) {
                     let fams = CustomFonts.families(in: fontFile)

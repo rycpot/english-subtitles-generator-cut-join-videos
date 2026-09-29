@@ -27,6 +27,8 @@ struct MergeText: Identifiable, Equatable {
     var alignment = Alignment.center
     var outline = false
     var outlineColor = NSColor.black
+    /// Outline thickness outside the letters, as a fraction of the font size.
+    var outlineWidth: CGFloat = 0.05
     var shadow = true
     var box = false
     var boxColor = NSColor.black
@@ -56,17 +58,15 @@ enum TextRenderer {
         return (base, t.bold && !have.contains(.boldFontMask), t.italic && !have.contains(.italicFontMask))
     }
 
+    /// The letters in their colour (plus shadow and synthetic bold / italic).
+    /// The outline is drawn separately, underneath (see `outlineLayer`).
     static func attributed(_ t: MergeText) -> NSAttributedString {
         let (font, fakeBold, fakeItalic) = font(t)
         let para = NSMutableParagraphStyle()
         para.alignment = t.alignment.nsAlignment
         var attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: t.color, .paragraphStyle: para]
         if fakeItalic { attrs[.obliqueness] = 0.2 }
-        if t.outline {
-            // Negative width: fill and stroke. The outline is ~6% of the size.
-            attrs[.strokeColor] = t.outlineColor
-            attrs[.strokeWidth] = -12
-        } else if fakeBold {
+        if fakeBold {
             attrs[.strokeColor] = t.color
             attrs[.strokeWidth] = -4
         }
@@ -80,8 +80,24 @@ enum TextRenderer {
         return NSAttributedString(string: t.text.isEmpty ? " " : t.text, attributes: attrs)
     }
 
+    /// The outline: the letters stroked (not filled) in the outline colour, twice
+    /// as thick as wanted, since a stroke is centred on the edge. Drawn first,
+    /// the letters then cover its inner half, so it only shows outside them and
+    /// never eats into the fill colour.
+    static func outlineLayer(_ t: MergeText) -> NSAttributedString {
+        let base = NSMutableAttributedString(attributedString: attributed(t))
+        let range = NSRange(location: 0, length: base.length)
+        base.removeAttribute(.shadow, range: range)
+        base.addAttribute(.strokeColor, value: t.outlineColor, range: range)
+        // Positive width = stroke only, in percent of the font size.
+        base.addAttribute(.strokeWidth, value: t.outlineWidth * 2 * 100, range: range)
+        return base
+    }
+
     /// Room around the glyphs for the box, outline, shadow and italic overhang.
-    static func padding(_ t: MergeText) -> CGFloat { t.box ? t.size * 0.35 : t.size * 0.15 }
+    static func padding(_ t: MergeText) -> CGFloat {
+        (t.box ? t.size * 0.35 : t.size * 0.15) + (t.outline ? t.size * t.outlineWidth : 0)
+    }
 
     /// The rendered text box: its image (at canvas scale) and size in canvas pixels.
     static func render(_ t: MergeText) -> (image: CGImage, size: CGSize)? {
@@ -102,8 +118,26 @@ enum TextRenderer {
             t.boxColor.withAlphaComponent(t.boxOpacity).setFill()
             box.fill()
         }
-        string.draw(with: CGRect(x: pad, y: pad, width: bounds.width, height: bounds.height),
-                    options: [.usesLineFragmentOrigin, .usesFontLeading])
+        let textRect = CGRect(x: pad, y: pad, width: bounds.width, height: bounds.height)
+        if t.outline {
+            if t.shadow {
+                // The shadow belongs under the outlined shape, not just the letters.
+                let s = NSShadow()
+                s.shadowColor = NSColor.black.withAlphaComponent(0.6)
+                s.shadowOffset = NSSize(width: t.size * 0.03, height: -t.size * 0.03)
+                s.shadowBlurRadius = t.size * 0.06
+                let layer = NSMutableAttributedString(attributedString: outlineLayer(t))
+                layer.addAttribute(.shadow, value: s, range: NSRange(location: 0, length: layer.length))
+                layer.draw(with: textRect, options: [.usesLineFragmentOrigin, .usesFontLeading])
+            } else {
+                outlineLayer(t).draw(with: textRect, options: [.usesLineFragmentOrigin, .usesFontLeading])
+            }
+            let fill = NSMutableAttributedString(attributedString: string)
+            fill.removeAttribute(.shadow, range: NSRange(location: 0, length: fill.length))
+            fill.draw(with: textRect, options: [.usesLineFragmentOrigin, .usesFontLeading])
+        } else {
+            string.draw(with: textRect, options: [.usesLineFragmentOrigin, .usesFontLeading])
+        }
         guard let image = ctx.makeImage() else { return nil }
         return (image, size)
     }
