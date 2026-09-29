@@ -99,7 +99,14 @@ struct MergeView: View {
                     Spacer()
                 }
                 Toggle("Even out the loudness for YouTube (-14 LUFS)", isOn: $model.normalize)
-                    .help("YouTube turns louder uploads down to about -14 LUFS; this matches it and keeps peaks from clipping.")
+                    .help("YouTube turns louder uploads down to about -14 LUFS but never turns quiet ones up; this brings the audio to that level and keeps peaks from clipping.")
+                if let note = model.audioNote {
+                    HStack(alignment: .top, spacing: 6) {
+                        Image(systemName: "info.circle").foregroundColor(Theme.mint)
+                        Text(note).font(.system(size: 11)).foregroundColor(Theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
             }
             .font(.system(size: 12))
         }

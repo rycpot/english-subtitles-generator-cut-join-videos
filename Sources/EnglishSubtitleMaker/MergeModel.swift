@@ -96,7 +96,9 @@ final class MergeModel: ToolModel {
     @Published var fadeIn = false
     @Published var fadeOut = false
     @Published var fadeSeconds = 1.0
-    @Published var normalize = false
+    /// On by default: YouTube turns loud uploads down but never quiet ones up,
+    /// and film soundtracks are mixed far quieter than YouTube's level.
+    @Published var normalize = true
     @Published var texts: [MergeText] = []
     @Published var selectedText: UUID?
     /// Font families to offer: the Mac's, with the user's own fonts first.
@@ -300,6 +302,19 @@ final class MergeModel: ToolModel {
         return nil
     }
 
+    /// A note about how the audio will be prepared, or nil.
+    var audioNote: String? {
+        guard let track = audioInfo?.audio.first else { return nil }
+        if let ch = track.channels, ch > 2 {
+            return "\(track.channelLayout ?? "\(ch)-channel") surround audio: it will be mixed down to stereo with the dialogue "
+                + "(centre channel) emphasised, as YouTube plays stereo and its own downmix makes speech quieter."
+        }
+        if !normalize {
+            return "Loudness evening is off. YouTube never turns quiet uploads up, so film or recorded audio may play quietly."
+        }
+        return nil
+    }
+
     // MARK: Running
 
     func run() {
@@ -310,7 +325,7 @@ final class MergeModel: ToolModel {
         let texts = self.texts
         let background = NSColor(background).usingColorSpace(.sRGB)?.cgColor ?? CGColor(gray: 0, alpha: 1)
         let track = info.audio.first
-        let copyAudio = wholeAudio && track?.codecName == "aac" && !fadeIn && !fadeOut && !normalize
+        let copyAudio = wholeAudio && track?.codecName == "aac" && (track?.channels ?? 2) <= 2 && !fadeIn && !fadeOut && !normalize
         let fadeInLength = fadeIn ? fadeSeconds : 0
         let fadeOutLength = fadeOut ? fadeSeconds : 0
         let normalize = self.normalize

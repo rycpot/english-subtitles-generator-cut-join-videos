@@ -54,7 +54,8 @@ Three more tabs use the bundled ffmpeg: cut and join videos **without changing t
 - **Canvas (1920 × 1080)**, after the design editor: drag the picture (it sticks to the canvas edges and centre lines, with a pink guide; hold **⌥** to move freely), resize from the corners with its proportions kept, **Crop** its edges, **Fit** or **Fill** in one click, pick a **background colour** for any uncovered area, and zoom (buttons or pinch).
 - **Text:** **Text** adds a text box; drag it (it snaps like pictures). Choose any Mac font or **Upload Font…** (.ttf/.otf/.ttc, kept for next time; **Remove Font** deletes it), size, **bold**, *italic*, colour, alignment, outline, shadow and a background box with its colour and opacity. Each text shows on **this picture** or on **all pictures**. What you see on the canvas is exactly what is drawn into the video. **Undo (⌘Z)** covers texts too.
 - **Slideshow:** several pictures split the audio equally; give any of them a set time and the others share the rest. Reorder with the arrows.
-- **Options:** fade in/out from and to black (with the sound), and evening out the loudness to YouTube's -14 LUFS.
+- **Options:** fade in/out from and to black (with the sound), and evening out the loudness to YouTube's -14 LUFS (on by default: YouTube turns loud uploads down but never turns quiet ones up, and film soundtracks are mixed far quieter).
+- **Surround audio** (5.1/7.1) is mixed down to stereo with the dialogue (centre channel) emphasised; YouTube plays stereo, and its own downmix lowers the centre, which makes speech sound quiet.
 - **From the Cutter:** with **Audio only** chosen, **Send to Merge** cuts the audio straight into the Merge tab without saving a file; the video is then saved next to the original.
 - Saved next to the audio as `<audio name>.mp4`.
 

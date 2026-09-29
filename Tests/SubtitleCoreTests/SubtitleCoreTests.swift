@@ -612,5 +612,12 @@ final class MergeLayoutTests: XCTestCase {
         copy.fadeOut = 0
         XCTAssertTrue(copy.ffmpegArguments.contains("2:a:0"))
         XCTAssertFalse(copy.ffmpegArguments.joined(separator: " ").contains("afade"))
+        // 5.1 is mixed down to stereo with the dialogue emphasised, before evening the loudness.
+        var surround = spec
+        surround.audioChannels = 6
+        let surroundGraph = surround.ffmpegArguments[surround.ffmpegArguments.firstIndex(of: "-filter_complex")! + 1]
+        XCTAssertTrue(surroundGraph.contains("[2:a:0]\(MergeSpec.dialogueDownmix),loudnorm"))
+        XCTAssertTrue(surround.ffmpegArguments.joined(separator: " ").contains("-ac 2"))
+        XCTAssertFalse(spec.ffmpegArguments.contains("-ac"), "stereo stays as it is")
     }
 }

@@ -172,6 +172,13 @@ public struct MergeSpec: Equatable {
     public var copyAudio: Bool
     public var output: String
     public var audioChannels = 2
+
+    /// Surround (more than 2 channels) is mixed down to stereo.
+    public var downmixesToStereo: Bool { audioChannels > 2 }
+
+    /// 5.1/7.1 → stereo with the centre at +3 dB instead of the usual -3 dB,
+    /// surrounds at half and no LFE: dialogue stands out over music and effects.
+    public static let dialogueDownmix = "aresample=ochl=stereo:clev=1.414:slev=0.5:lfe_mix_level=0"
     public var fps = 30
 
     public init(slides: [Slide], audio: String, audioStart: Double, audioLength: Double, fadeIn: Double, fadeOut: Double,
@@ -208,6 +215,10 @@ public struct MergeSpec: Equatable {
         if !copyAudio {
             var audioChain = "[\(a):a:0]"
             var filters: [String] = []
+            // YouTube plays stereo and folds surround down itself, with the centre
+            // (dialogue) channel lowered. Mix down here instead, keeping the centre
+            // strong and leaving out the LFE rumble.
+            if downmixesToStereo { filters.append(Self.dialogueDownmix) }
             if normalize { filters.append("loudnorm=I=-14:TP=-1.5:LRA=11") }
             if fadeIn > 0 { filters.append("afade=t=in:st=0:d=\(f(fadeIn))") }
             if fadeOut > 0 { filters.append("afade=t=out:st=\(f(max(0, audioLength - fadeOut))):d=\(f(fadeOut))") }
@@ -219,6 +230,7 @@ public struct MergeSpec: Equatable {
         args += ["-c:v", "libx264", "-preset", "veryfast", "-tune", "stillimage", "-crf", "18",
                  "-profile:v", "high", "-level:v", "4.2", "-pix_fmt", "yuv420p", "-r", "\(fps)", "-g", "\(fps * 2)"]
         args += copyAudio ? ["-c:a", "copy"] : ["-c:a", "aac", "-b:a", audioChannels == 1 ? "160k" : "320k", "-ar", "48000"]
+            + (downmixesToStereo && !copyAudio ? ["-ac", "2"] : [])
         args += ["-t", f(audioLength), "-movflags", "+faststart", output]
         return args
     }

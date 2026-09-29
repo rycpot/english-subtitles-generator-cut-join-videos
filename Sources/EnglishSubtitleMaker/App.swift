@@ -246,6 +246,19 @@ enum SelfTest {
                 if !formatOK { failures += 1 }
                 try await check("merge frames", merged, frames: 360, tolerance: 1)
 
+                // 5.1 audio (the HEVC film's AC3) is mixed down to stereo for YouTube.
+                let merged51 = out.appendingPathComponent("merged51.mp4")
+                var spec51 = MergeSpec(slides: [.init(file: slideFiles[0], length: 6)], audio: hv.path, audioStart: 2,
+                                       audioLength: 6, fadeIn: 0, fadeOut: 0, normalize: true, copyAudio: false,
+                                       output: merged51.path)
+                spec51.audioChannels = 6
+                try await tools.merge(spec51)
+                let a51 = try await tools.probe(merged51).audio.first
+                let stereoOK = a51?.channels == 2 && a51?.codecName == "aac" && a51?.sampleRate == "48000"
+                print(stereoOK ? "PASS 5.1 audio merged as 48 kHz stereo AAC"
+                               : "FAIL 5.1 merge audio: \(a51?.codecName ?? "none") \(a51?.channels ?? 0) ch \(a51?.sampleRate ?? "")")
+                if !stereoOK { failures += 1 }
+
                 // 11. Text on the canvas: a boxed, outlined, bold italic text is drawn into
                 //     the frame where it sits, and font files can be read for their families.
                 let textOK: Bool = await MainActor.run {
