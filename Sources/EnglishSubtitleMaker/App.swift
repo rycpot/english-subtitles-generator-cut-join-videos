@@ -79,7 +79,8 @@ enum SelfTest {
             }
         }
         // The task above ends the process; keep the main thread parked until then.
-        while true { sleep(60) }
+        // Keep the main thread serving work (MainActor), until the test calls exit().
+        dispatchMain()
     }
 
     /// `EnglishSubtitleMaker --selftest-tools <folder>`: cuts, splits and joins
@@ -283,7 +284,8 @@ enum SelfTest {
                 exit(1)
             }
         }
-        while true { sleep(60) }
+        // Keep the main thread serving work (MainActor), until the test calls exit().
+        dispatchMain()
     }
 }
 
