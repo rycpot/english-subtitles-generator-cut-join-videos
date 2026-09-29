@@ -75,9 +75,11 @@ public extension ProbeResult {
     }
 
     /// Smart cutting (copy between keyframes, re-encode only the edges) is
-    /// verified for 8-bit 4:2:0 H.264 at a constant frame rate.
+    /// verified for 8-bit 4:2:0 H.264 and 8/10-bit 4:2:0 HEVC at a constant frame rate.
     var canSmartCut: Bool {
-        guard let v = video, v.codecName == "h264", ["yuv420p", "yuvj420p"].contains(v.pixFmt ?? "") else { return false }
+        guard let v = video else { return false }
+        let formats: [String: Set<String>] = ["h264": ["yuv420p", "yuvj420p"], "hevc": ["yuv420p", "yuv420p10le"]]
+        guard let allowed = formats[v.codecName ?? ""], allowed.contains(v.pixFmt ?? "") else { return false }
         guard let r = Self.rate(v.rFrameRate) else { return false }
         if let a = Self.rate(v.avgFrameRate), abs(a - r) / r > 0.01 { return false }
         return true
@@ -118,6 +120,40 @@ public struct JoinSignature: Hashable {
         if audio != other.audio { out.append("audio tracks differ") }
         if subtitles != other.subtitles { out.append("subtitle tracks differ") }
         return out
+    }
+}
+
+public extension ProbeStream {
+    /// "Track 2 · eng · 5.1 · eac3 · default", for picking an audio track.
+    var audioLabel: String {
+        var parts: [String] = []
+        if let lang = tags?["language"], !lang.isEmpty, lang != "und" { parts.append(lang) }
+        if let title = tags?["title"], !title.isEmpty { parts.append(title) }
+        if let layout = channelLayout, !layout.isEmpty {
+            parts.append(layout)
+        } else if let ch = channels {
+            parts.append("\(ch) ch")
+        }
+        if let codec = codecName { parts.append(codec) }
+        if disposition?["default"] == 1 { parts.append("default") }
+        return parts.joined(separator: " · ")
+    }
+}
+
+public enum AudioFiles {
+    /// The file type that holds an audio stream of `codec` unchanged.
+    public static func fileExtension(forCodec codec: String?) -> String {
+        switch codec ?? "" {
+        case "aac", "alac": return "m4a"
+        case "mp3": return "mp3"
+        case "ac3": return "ac3"
+        case "eac3": return "eac3"
+        case "flac": return "flac"
+        case "opus": return "opus"
+        case "vorbis": return "ogg"
+        case "pcm_s16le", "pcm_s24le", "pcm_s32le", "pcm_f32le", "pcm_u8": return "wav"
+        default: return "mka"   // Matroska holds any audio (DTS, TrueHD, …)
+        }
     }
 }
 

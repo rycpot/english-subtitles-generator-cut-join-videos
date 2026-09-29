@@ -120,7 +120,7 @@ final class MediaTools {
             }
         } else {
             let codec = first.probe.video?.codecName ?? "?"
-            log(.info, "Video is \(codec), so the cut video is re-encoded at high quality (lossless copying is only used for H.264). Audio and subtitles are copied unchanged.")
+            log(.info, "Video is \(codec), so the cut video is re-encoded at high quality (lossless copying is only used for H.264 and HEVC). Audio and subtitles are copied unchanged.")
         }
         try await renderAssembled(pieces, to: output, work: work, smart: false)
     }
@@ -167,7 +167,10 @@ final class MediaTools {
                 progress(Double(step) / Double(totalSteps), smart && cut.isCopy
                          ? "Copying piece \(p + 1) of \(pieces.count)…" : "Encoding piece \(p + 1) of \(pieces.count)…")
                 let file = work.appendingPathComponent("v\(p)_\(i).ts")
-                try await writeVideo(cut, of: piece, to: file)
+                let what = smart ? "Encoding an edge of piece \(p + 1) of \(pieces.count)…" : "Encoding piece \(p + 1) of \(pieces.count)…"
+                let report = reporter(what, from: cut.start, to: cut.end,
+                                      progress: Double(step - 1) / Double(totalSteps)...Double(step) / Double(totalSteps))
+                try await writeVideo(cut, of: piece, to: file, report: cut.isCopy ? nil : report)
                 videoList += "file '\(file.path)'\nduration \(String(format: "%.6f", cut.duration))\n"
                 if i > 0, plan[i - 1].isCopy != cut.isCopy {
                     junctions.append(Junction(output: outputTime, source: piece.url,
@@ -230,7 +233,8 @@ final class MediaTools {
     }
 
     /// One video stretch as MPEG-TS, copied or encoded.
-    private func writeVideo(_ cut: CutPiece, of piece: MediaPiece, to file: URL) async throws {
+    private func writeVideo(_ cut: CutPiece, of piece: MediaPiece, to file: URL,
+                            report: ((String) -> Void)? = nil) async throws {
         let v = piece.probe.video!
         let fd = piece.probe.frameDuration
         let seek = String(format: "%.6f", max(0, cut.start - piece.probe.startTime - 10))
@@ -243,15 +247,16 @@ final class MediaTools {
             // carry them before IDR frames, which a cut may not start at.
             // noise drops the frames shown before the first (key)frame: in open
             // GOP they need the previous group, and the re-encoded head has them.
+            let annexB = v.codecName == "hevc" ? "hevc_mp4toannexb" : "h264_mp4toannexb"
             args += ["-map", "0:\(v.index)", "-c", "copy",
-                     "-bsf:v", "h264_mp4toannexb,dump_extra=freq=keyframe,noise=drop=lt(pts\\,startpts)"]
+                     "-bsf:v", "\(annexB),dump_extra=freq=keyframe,noise=drop=lt(pts\\,startpts)"]
         case .encode(let start, let end):
             args += ["-map", "0:\(v.index)",
                      "-vf", String(format: "trim=start=%.6f:end=%.6f", start, end),
                      "-fps_mode", "passthrough"] + encoderArgs(for: piece.probe)
         }
         args += ["-an", "-sn", "-dn", "-f", "mpegts", file.path]
-        try await run(args, failure: .cutFailed)
+        try await run(args, failure: .cutFailed, report: report)
     }
 
     /// High-quality encoding that keeps the source's codec family.
@@ -310,11 +315,9 @@ final class MediaTools {
                  "-progress", "pipe:1", "-nostats"]
         if isMP4(output) { args += ["-movflags", "+faststart"] }
         let total = pieces.reduce(0) { $0 + $1.duration }
-        let result = try await ProcessRunner.run(ffmpeg, args + [output.path], onStdoutLine: { [progress] line in
-            if let t = FFmpegOutput.progressSeconds(fromLine: line), total > 0 {
-                progress(min(0.99, t / total), "Converting and joining…")
-            }
-        })
+        let result = try await ProcessRunner.run(ffmpeg, args + [output.path],
+                                                 onStdoutLine: reporter("Converting and joining…", from: 0, to: total,
+                                                                        progress: 0...0.99))
         guard result.status == 0 else {
             log(.detail, result.stderrTail)
             throw SubtitleError(.joinFailed, "ffmpeg exit code \(result.status)")
@@ -334,12 +337,63 @@ final class MediaTools {
     }
 
     /// Errors from decoding the whole file.
+    /// Length of the first audio stream from its decoded samples (raw .ac3
+    /// files have no reliable stored duration).
+    func audioLength(_ url: URL) async throws -> Double {
+        let result = try await tool(ffprobe, ["-v", "error", "-select_streams", "a:0", "-show_entries", "frame=duration_time",
+                                              "-of", "csv=p=0", url.path])
+        return result.stdout.split(separator: "\n").compactMap { Double($0.split(separator: ",").first ?? "") }.reduce(0, +)
+    }
+
     func decodeErrors(_ url: URL) async throws -> [String] {
         let result = try await tool(ffmpeg, ["-hide_banner", "-nostdin", "-v", "error", "-i", url.path, "-f", "null", "-"])
         return result.stderrLines.filter { !$0.contains("non monotonically increasing dts") }
     }
 
     // MARK: Helpers
+
+    /// Turns ffmpeg `-progress` lines of an encode covering `from`...`to` (its
+    /// output timestamps, seconds) into progress within `range` and a status
+    /// with the percentage and the time left, so long encodes visibly move.
+    func reporter(_ what: String, from: Double, to: Double, progress range: ClosedRange<Double>) -> (String) -> Void {
+        let started = Date()
+        let span = max(0.001, to - from)
+        let progress = self.progress
+        return { line in
+            guard let t = FFmpegOutput.progressSeconds(fromLine: line) else { return }
+            // Timestamps are kept (-copyts) in most encodes, but start at 0 in some.
+            let done = min(1, max(0, (t >= from - 1 ? t - from : t) / span))
+            guard done > 0 else { return }
+            let elapsed = Date().timeIntervalSince(started)
+            var text = "\(what) \(Int(done * 100))%"
+            if elapsed > 5, done > 0.01, done < 1 {
+                text += " · about \(Self.readable(elapsed * (1 - done) / done)) left"
+            }
+            progress(range.lowerBound + done * (range.upperBound - range.lowerBound), text)
+        }
+    }
+
+    /// "2 h 05 min", "12 min", "40 s".
+    static func readable(_ seconds: Double) -> String {
+        let s = Int(seconds.rounded())
+        if s >= 3600 { return String(format: "%d h %02d min", s / 3600, (s % 3600) / 60) }
+        if s >= 60 { return "\(Int((Double(s) / 60).rounded())) min" }
+        return "\(max(1, s)) s"
+    }
+
+    /// Copies one audio track of `piece` unchanged into `output` (its type
+    /// chosen by `AudioFiles.fileExtension`). Accurate to one audio frame
+    /// (a few hundredths of a second): the input is opened 10 s early, as a
+    /// seek lands on a video keyframe and would keep the audio from there.
+    func extractAudio(_ piece: MediaPiece, streamIndex: Int, to output: URL) async throws {
+        let seek = max(0, piece.start - 10)
+        try await run(["-hide_banner", "-nostdin", "-y",
+                       "-ss", String(format: "%.6f", seek), "-i", piece.url.path,
+                       "-ss", String(format: "%.6f", piece.start - seek), "-t", String(format: "%.6f", piece.duration),
+                       "-map", "0:\(streamIndex)", "-c", "copy", "-vn", "-sn", "-dn",
+                       "-map_metadata", "0", "-map_chapters", "-1", output.path],
+                      failure: .cutFailed)
+    }
 
     /// Moves a piece's start and end onto the first frame at or after them, so
     /// every part of a cut lasts exactly its frames: no timing gap where parts
@@ -437,8 +491,14 @@ final class MediaTools {
         return ToolResult(status: result.status, stdout: out.text, stderrLines: result.stderrLines)
     }
 
-    private func run(_ args: [String], failure: ErrorCode) async throws {
-        let result = try await tool(ffmpeg, args)
+    private func run(_ args: [String], failure: ErrorCode, report: ((String) -> Void)? = nil) async throws {
+        let result: ToolResult
+        if let report {
+            let r = try await ProcessRunner.run(ffmpeg, ["-progress", "pipe:1", "-nostats"] + args, onStdoutLine: report)
+            result = ToolResult(status: r.status, stdout: "", stderrLines: r.stderrLines)
+        } else {
+            result = try await tool(ffmpeg, args)
+        }
         guard result.status == 0 else {
             log(.detail, result.stderrTail)
             throw SubtitleError(failure, "ffmpeg exit code \(result.status)")

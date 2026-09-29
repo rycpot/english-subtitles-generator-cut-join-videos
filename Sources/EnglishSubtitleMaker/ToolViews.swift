@@ -357,8 +357,17 @@ struct CutterView: View {
                                     .foregroundColor(Theme.textFaint)
                             }
                             Spacer()
+                            Picker("", selection: $model.output) {
+                                ForEach(CutOutput.allCases) { Text($0.rawValue).tag($0) }
+                            }
+                            .pickerStyle(.segmented)
+                            .labelsHidden()
+                            .frame(width: 220)
+                            .disabled(model.isRunning)
+                            .help("Audio only copies one audio track, unchanged, for the range and parts below")
                             Button("Change…") { model.file = nil }.buttonStyle(.pillSmall).disabled(model.isRunning)
                         }
+                        if model.output == .audio { audioTrackRow }
                         SectionTitle("Range")
                         RangeEditor(fields: $model.fields, fileDuration: model.info?.duration,
                                     frameDuration: model.info?.frameDuration ?? 0.04, preview: model.preview)
@@ -380,6 +389,33 @@ struct CutterView: View {
                 }
             }
             ToolProgress(model: model)
+        }
+    }
+
+    /// Which audio track "Audio only" copies (a picker when there are several).
+    @ViewBuilder private var audioTrackRow: some View {
+        let tracks = model.info?.audio ?? []
+        HStack(spacing: 10) {
+            Image(systemName: "waveform").foregroundColor(Theme.mint)
+            if tracks.isEmpty {
+                Text(model.info == nil ? "Reading audio tracks…" : "This file has no audio track.")
+                    .font(.system(size: 12))
+                    .foregroundColor(model.info == nil ? Theme.textSecondary : Theme.warning)
+            } else if tracks.count == 1 {
+                Text("Audio track: \(tracks[0].audioLabel)").font(.system(size: 12))
+            } else {
+                Text("Audio track:").font(.system(size: 12))
+                Picker("", selection: Binding(get: { model.chosenAudio?.index ?? tracks[0].index },
+                                              set: { model.audioTrack = $0 })) {
+                    ForEach(Array(tracks.enumerated()), id: \.element.index) { i, t in
+                        Text("Track \(i + 1) · \(t.audioLabel)").tag(t.index)
+                    }
+                }
+                .labelsHidden()
+                .frame(maxWidth: 360)
+                .disabled(model.isRunning)
+            }
+            Spacer()
         }
     }
 
@@ -428,9 +464,12 @@ struct CutterView: View {
         case .failure(let message):
             return message
         case .success(let ranges):
-            if ranges.count == 1 { return "Creates 1 file next to the original." }
+            let kind = model.output == .audio
+                ? " audio" + (model.chosenAudio.map { " (.\(AudioFiles.fileExtension(forCodec: $0.codecName)))" } ?? "")
+                : ""
+            if ranges.count == 1 { return "Creates 1\(kind) file next to the original." }
             let lengths = Set(ranges.map { TimeCode.format($0.end - $0.start) })
-            return "Creates \(ranges.count) files next to the original"
+            return "Creates \(ranges.count)\(kind) files next to the original"
                 + (lengths.count == 1 ? ", \(lengths.first!) each." : " (the last one shorter).")
         }
     }

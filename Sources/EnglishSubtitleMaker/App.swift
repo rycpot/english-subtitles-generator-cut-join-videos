@@ -83,7 +83,7 @@ enum SelfTest {
     }
 
     /// `EnglishSubtitleMaker --selftest-tools <folder>`: cuts, splits and joins
-    /// test films in <folder> (src.mkv, src2.mkv, other720.mp4, opengop.mp4) and
+    /// test films in <folder> (src.mkv, src2.mkv, other720.mp4, opengop.mp4, hevc10.mkv) and
     /// checks every output has exactly the expected frames and decodes without errors.
     static func runTools(folder: URL) -> Never {
         Task.detached {
@@ -183,6 +183,32 @@ enum SelfTest {
                 let ogJoined = out.appendingPathComponent("opengop-joined.mp4")
                 try await tools.render(ogParts, to: ogJoined)
                 try await check("open-GOP parts joined back", ogJoined, frames: expected(pts4, p4, 0.3, 20.3))
+
+                // 8. 10-bit HEVC with open GOP (typical x265 film releases): quick cut too,
+                //    keeping the format.
+                let hv = folder.appendingPathComponent("hevc10.mkv")
+                let p5 = try await tools.probe(hv)
+                let pts5 = try await tools.framePTS(hv)
+                print(p5.canSmartCut ? "PASS 10-bit HEVC uses the quick cut" : "FAIL 10-bit HEVC not quick-cut: \(p5.formatSummary)")
+                if !p5.canSmartCut { failures += 1 }
+                let hvCut = out.appendingPathComponent("hevc10-cut.mkv")
+                try await tools.render([MediaPiece(url: hv, probe: p5, start: 5.3, end: 15.6)], to: hvCut)
+                try await check("HEVC 10-bit cut 5.3-15.6", hvCut, frames: expected(pts5, p5, 5.3, 15.6))
+                let hvDiff = try await tools.probe(hvCut).joinSignature.differences(from: p5.joinSignature)
+                print(hvDiff.isEmpty ? "PASS HEVC cut keeps the format" : "FAIL HEVC cut format: \(hvDiff)")
+                if !hvDiff.isEmpty { failures += 1 }
+
+                // 9. Audio only: one track copied unchanged, the length of the range.
+                for (name, source, probe, trackIndex, ext) in [("AAC from .mkv", src, p1, 1, "m4a"),
+                                                                ("AC3 5.1 from .mkv", hv, p5, 1, "ac3")] {
+                    let a = out.appendingPathComponent("audio-\(ext).\(ext)")
+                    try await tools.extractAudio(MediaPiece(url: source, probe: probe, start: 20.5, end: 27.7),
+                                                 streamIndex: trackIndex, to: a)
+                    let length = try await tools.audioLength(a)
+                    let ok = abs(length - 7.2) < 0.06
+                    print("\(ok ? "PASS" : "FAIL") audio only, \(name): \(String(format: "%.3f", length)) s, expected 7.200")
+                    if !ok { failures += 1 }
+                }
 
                 // The quick cut must not have fallen back to full re-encoding anywhere.
                 let fell = fallbacks.count

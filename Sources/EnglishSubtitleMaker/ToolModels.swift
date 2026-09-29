@@ -115,6 +115,13 @@ class ToolModel: ObservableObject {
     }
 }
 
+/// What the Cutter writes: the whole video, or one audio track only.
+enum CutOutput: String, CaseIterable, Identifiable {
+    case video = "Video + audio"
+    case audio = "Audio only"
+    var id: String { rawValue }
+}
+
 enum SplitKind: String, CaseIterable, Identifiable {
     case none = "Don't split"
     case count = "Into equal parts"
@@ -129,6 +136,9 @@ final class CutterModel: ToolModel {
     @Published var fields = RangeFields() {
         didSet { if fields != oldValue { schedulePreview() } }
     }
+    @Published var output: CutOutput = .video
+    /// The audio track to extract (a stream index); nil = the default track.
+    @Published var audioTrack: Int?
     @Published var splitKind: SplitKind = .none
     @Published var splitCount = "4"
     @Published var splitLength = "00:00:30"
@@ -160,8 +170,16 @@ final class CutterModel: ToolModel {
         }
     }
 
+    /// The audio stream "Audio only" extracts: the picked one, else the default track.
+    var chosenAudio: ProbeStream? {
+        guard let tracks = info?.audio, !tracks.isEmpty else { return nil }
+        return tracks.first { $0.index == audioTrack }
+            ?? tracks.first { $0.disposition?["default"] == 1 } ?? tracks.first
+    }
+
     /// The ranges that will be written, or what is wrong.
     var plannedRanges: Result<[(start: Double, end: Double)], String> {
+        if output == .audio, info != nil, chosenAudio == nil { return .failure("This file has no audio track.") }
         switch (range, splitMode) {
         case (.failure(let e), _): return .failure(e.description)
         case (_, .failure(let e)): return .failure(e)
@@ -174,6 +192,7 @@ final class CutterModel: ToolModel {
     func load(_ url: URL) {
         file = url
         info = nil
+        audioTrack = nil
         preview = RangePreview()
         status = "Reading \(url.lastPathComponent)…"
         Task {
@@ -205,21 +224,30 @@ final class CutterModel: ToolModel {
         guard let file, let info, case .success(let ranges) = plannedRanges else { return }
         let base = file.deletingPathExtension().lastPathComponent
         let folder = file.deletingLastPathComponent()
-        let ext = file.pathExtension.isEmpty ? "mkv" : file.pathExtension
+        let audio = output == .audio ? chosenAudio : nil
+        if output == .audio, audio == nil { return }
+        let ext = audio.map { AudioFiles.fileExtension(forCodec: $0.codecName) }
+            ?? (file.pathExtension.isEmpty ? "mkv" : file.pathExtension)
         guard case .success(let whole) = range else { return }
         let label = "[\(TimeCode.fileSafe(whole.lowerBound))–\(TimeCode.fileSafe(whole.upperBound))]"
+        let what = audio.map { "the audio (\($0.audioLabel)) of " } ?? ""
         let title = ranges.count == 1
-            ? "Cutting \(file.lastPathComponent) \(TimeCode.format(whole.lowerBound))–\(TimeCode.format(whole.upperBound))"
-            : "Cutting \(file.lastPathComponent) into \(ranges.count) parts"
+            ? "Cutting \(what)\(file.lastPathComponent) \(TimeCode.format(whole.lowerBound))–\(TimeCode.format(whole.upperBound))"
+            : "Cutting \(what)\(file.lastPathComponent) into \(ranges.count) parts"
         start(title) { tools in
             var outputs: [URL] = []
             for (i, r) in ranges.enumerated() {
                 try Task.checkCancellation()
-                let name = ranges.count == 1 ? "\(base) \(label)" : "\(base) \(label) part \(i + 1) of \(ranges.count)"
+                var name = ranges.count == 1 ? "\(base) \(label)" : "\(base) \(label) part \(i + 1) of \(ranges.count)"
+                if audio != nil { name += " audio" }
                 let out = Self.uniqueURL(in: folder, base: name, ext: ext)
                 await MainActor.run { self.status = "Part \(i + 1) of \(ranges.count)…" }
                 let piece = MediaPiece(url: file, probe: info, start: r.start, end: r.end)
-                try await tools.render([piece], to: out)
+                if let audio {
+                    try await tools.extractAudio(piece, streamIndex: audio.index, to: out)
+                } else {
+                    try await tools.render([piece], to: out)
+                }
                 outputs.append(out)
             }
             return outputs

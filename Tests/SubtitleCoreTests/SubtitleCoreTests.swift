@@ -442,6 +442,17 @@ final class CutPlannerTests: XCTestCase {
         XCTAssertEqual(p.startTime, -0.023)
         XCTAssertEqual(p.frameDuration, 1001.0 / 24000, accuracy: 1e-9)
         XCTAssertTrue(p.canSmartCut)
+        var hevc10 = p
+        hevc10.streams[0].codecName = "hevc"
+        hevc10.streams[0].pixFmt = "yuv420p10le"
+        XCTAssertTrue(hevc10.canSmartCut, "10-bit HEVC is copied between keyframes too")
+        var vp9 = p
+        vp9.streams[0].codecName = "vp9"
+        XCTAssertFalse(vp9.canSmartCut)
+        XCTAssertEqual(p.audio.first?.audioLabel, "kor · 2 ch · aac")
+        XCTAssertEqual(AudioFiles.fileExtension(forCodec: "aac"), "m4a")
+        XCTAssertEqual(AudioFiles.fileExtension(forCodec: "eac3"), "eac3")
+        XCTAssertEqual(AudioFiles.fileExtension(forCodec: "dts"), "mka")
         XCTAssertEqual(p.chapterList.first?.title, "Intro")
         var other = p
         other.streams[0].width = 1280
