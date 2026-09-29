@@ -21,6 +21,7 @@ struct MergeView: View {
                         VStack(alignment: .leading, spacing: 10) {
                             SectionTitle("Canvas · 1920 × 1080")
                             MergeCanvasEditor(model: model)
+                            if model.selectedTextIndex != nil { TextPanel(model: model) }
                             slideStrip
                             if let i = model.selectedIndex { slideTiming(i) }
                         }
@@ -249,11 +250,15 @@ struct MergeCanvasEditor: View {
 
     private var toolbar: some View {
         HStack(spacing: 8) {
-            Button { model.undo() } label: { Label("Undo", systemImage: "arrow.uturn.backward") }
+            // While a text is selected its text field handles ⌘Z itself.
+            if model.selectedText == nil {
+                undoButton.keyboardShortcut("z", modifiers: .command)
+            } else {
+                undoButton
+            }
+            Button { model.addText() } label: { Label("Text", systemImage: "textformat") }
                 .buttonStyle(.pillSmall)
-                .keyboardShortcut("z", modifiers: .command)
-                .disabled(model.undoStack.isEmpty)
-                .help("Undo the last change to the pictures (⌘Z)")
+                .help("Add a text box to this picture")
             Button("Fit") { place(fill: false) }.buttonStyle(.pillSmall)
                 .help("Show the whole picture, centred")
             Button("Fill") { place(fill: true) }.buttonStyle(.pillSmall)
@@ -278,6 +283,13 @@ struct MergeCanvasEditor: View {
         }
     }
 
+    private var undoButton: some View {
+        Button { model.undo() } label: { Label("Undo", systemImage: "arrow.uturn.backward") }
+            .buttonStyle(.pillSmall)
+            .disabled(model.undoStack.isEmpty)
+            .help("Undo the last change to the pictures or texts (⌘Z)")
+    }
+
     // MARK: Drawing
 
     @ViewBuilder private var canvas: some View {
@@ -294,7 +306,19 @@ struct MergeCanvasEditor: View {
                     }
                     picture(Image(decorative: slide.croppedImage, scale: 1), in: slide.frame)
                         .gesture(moveGesture(i), including: cropping ? .none : .all)
+                        .simultaneousGesture(TapGesture().onEnded { model.selectedText = nil })
                         .onHover { inside in (inside && !cropping ? NSCursor.openHand : NSCursor.arrow).set() }
+                    // Text boxes above the picture, drawn exactly as in the video.
+                    ForEach(model.visibleTexts) { t in
+                        if let r = TextRenderer.render(t) {
+                            Image(decorative: r.image, scale: 1)
+                                .resizable()
+                                .frame(width: r.size.width * scale, height: r.size.height * scale)
+                                .offset(x: t.origin.x * scale, y: t.origin.y * scale)
+                                .gesture(textGesture(t.id), including: cropping ? .none : .all)
+                                .onHover { inside in (inside && !cropping ? NSCursor.openHand : NSCursor.arrow).set() }
+                        }
+                    }
                 }
                 .frame(width: w, height: h, alignment: .topLeading)
                 .clipped()
@@ -308,6 +332,12 @@ struct MergeCanvasEditor: View {
                 guides(w: w, h: h)
                 if cropping {
                     cropHandles(i, slide)
+                } else if let ti = model.selectedTextIndex {
+                    let f = TextRenderer.frame(model.texts[ti])
+                    Rectangle().stroke(Theme.accent, style: StrokeStyle(lineWidth: 1.5, dash: [5, 3]))
+                        .frame(width: f.width * scale, height: f.height * scale)
+                        .offset(x: f.minX * scale, y: f.minY * scale)
+                        .allowsHitTesting(false)
                 } else {
                     resizeHandles(i, slide)
                 }
@@ -354,6 +384,27 @@ struct MergeCanvasEditor: View {
                 let r = snapping ? CanvasSnap.drag(moved, threshold: snapPoints / scale)
                                  : CanvasSnap.Result(rect: moved, guideX: nil, guideY: nil)
                 model.slides[i].frame = r.rect
+                guideX = r.guideX
+                guideY = r.guideY
+            }
+            .onEnded { _ in endDrag() }
+    }
+
+    /// Selects a text box and moves it, with the same snapping as pictures.
+    private func textGesture(_ id: UUID) -> some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { v in
+                guard let ti = model.texts.firstIndex(where: { $0.id == id }) else { return }
+                model.selectedText = id
+                guard hypot(v.translation.width, v.translation.height) > 1 || dragStart != nil else { return }
+                if dragStart == nil {
+                    model.checkpoint()
+                    dragStart = TextRenderer.frame(model.texts[ti])
+                }
+                guard let start = dragStart else { return }
+                let moved = start.offsetBy(dx: v.translation.width / scale, dy: v.translation.height / scale)
+                let r = snapping ? CanvasSnap.drag(moved, threshold: snapPoints / scale) : CanvasSnap.Result(rect: moved)
+                model.texts[ti].origin = r.rect.origin
                 guideX = r.guideX
                 guideY = r.guideY
             }
@@ -462,6 +513,114 @@ struct MergeCanvasEditor: View {
                         }
                         .onEnded { _ in endDrag() })
             }
+        }
+    }
+}
+
+// MARK: - Text controls
+
+/// Text, font (with your own fonts), size, bold / italic, colour, alignment,
+/// outline, shadow, background box and which pictures it shows on.
+struct TextPanel: View {
+    @ObservedObject var model: MergeModel
+    @State private var showFontImporter = false
+
+    private static let systemFamilies = NSFontManager.shared.availableFontFamilies.sorted()
+
+    private func bind<T>(_ key: WritableKeyPath<MergeText, T>) -> Binding<T> {
+        Binding(get: { model.texts[safe: model.selectedTextIndex ?? -1]?[keyPath: key] ?? MergeText()[keyPath: key] },
+                set: { v in model.updateText { $0[keyPath: key] = v } })
+    }
+
+    private func colour(_ key: WritableKeyPath<MergeText, NSColor>) -> Binding<Color> {
+        Binding(get: { Color(bind(key).wrappedValue) },
+                set: { c in bind(key).wrappedValue = NSColor(c).usingColorSpace(.sRGB) ?? .white })
+    }
+
+    var body: some View {
+        if let t = model.texts[safe: model.selectedTextIndex ?? -1] {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .top, spacing: 10) {
+                    TextEditor(text: bind(\.text))
+                        .font(.system(size: 13))
+                        .frame(minWidth: 260, maxWidth: .infinity, minHeight: 48, maxHeight: 72)
+                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Theme.border, lineWidth: 1))
+                    VStack(alignment: .leading, spacing: 6) {
+                        Picker("", selection: bind(\.slide)) {
+                            Text("This picture").tag(model.selected)
+                            Text("All pictures").tag(UUID?.none)
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .frame(width: 200)
+                        .help("Show this text on the selected picture only, or on every picture")
+                        Button(role: .destructive) { model.deleteText() } label: { Label("Delete text", systemImage: "trash") }
+                            .buttonStyle(.pillSmall)
+                    }
+                }
+                HStack(spacing: 8) {
+                    Picker("Font", selection: bind(\.fontFamily)) {
+                        if !model.customFamilies.isEmpty {
+                            Section("Your fonts") {
+                                ForEach(model.customFamilies, id: \.self) { Text($0).tag($0) }
+                            }
+                        }
+                        Section("Mac fonts") {
+                            ForEach(Self.systemFamilies.filter { !model.customFamilies.contains($0) }, id: \.self) {
+                                Text($0).tag($0)
+                            }
+                        }
+                    }
+                    .frame(width: 240)
+                    Button("Upload Font…") { showFontImporter = true }
+                        .buttonStyle(.pillSmall)
+                        .help("Add a .ttf, .otf or .ttc font; it stays available next time")
+                    if model.customFamilies.contains(t.fontFamily) {
+                        Button("Remove Font") { model.removeFont(family: t.fontFamily) }
+                            .buttonStyle(.pillSmall)
+                    }
+                    Divider().frame(height: 18)
+                    Text("Size").font(.system(size: 11)).foregroundColor(Theme.textSecondary)
+                    Slider(value: bind(\.size), in: 16...400).frame(width: 120)
+                    Stepper(value: bind(\.size), in: 16...400, step: 2) {
+                        Text("\(Int(t.size)) px").font(.system(size: 11, design: .monospaced)).frame(width: 52, alignment: .trailing)
+                    }
+                    Toggle(isOn: bind(\.bold)) { Image(systemName: "bold") }.toggleStyle(.button).help("Bold")
+                    Toggle(isOn: bind(\.italic)) { Image(systemName: "italic") }.toggleStyle(.button).help("Italic")
+                    ColorPicker("", selection: colour(\.color), supportsOpacity: true).labelsHidden().help("Text colour")
+                    Picker("", selection: bind(\.alignment)) {
+                        Image(systemName: "text.alignleft").tag(MergeText.Alignment.left)
+                        Image(systemName: "text.aligncenter").tag(MergeText.Alignment.center)
+                        Image(systemName: "text.alignright").tag(MergeText.Alignment.right)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(width: 110)
+                    .help("Alignment of lines")
+                    Spacer()
+                }
+                HStack(spacing: 10) {
+                    Toggle("Outline", isOn: bind(\.outline))
+                    ColorPicker("", selection: colour(\.outlineColor), supportsOpacity: false).labelsHidden()
+                        .disabled(!t.outline).help("Outline colour")
+                    Toggle("Shadow", isOn: bind(\.shadow))
+                    Divider().frame(height: 18)
+                    Toggle("Background box", isOn: bind(\.box))
+                    ColorPicker("", selection: colour(\.boxColor), supportsOpacity: false).labelsHidden()
+                        .disabled(!t.box).help("Box colour")
+                    Text("Opacity").font(.system(size: 11)).foregroundColor(Theme.textSecondary)
+                    Slider(value: bind(\.boxOpacity), in: 0.1...1).frame(width: 110).disabled(!t.box)
+                    Text("\(Int(t.boxOpacity * 100))%").font(.system(size: 11, design: .monospaced)).frame(width: 40)
+                    Spacer()
+                }
+            }
+            .font(.system(size: 12))
+            .padding(10)
+            .background(RoundedRectangle(cornerRadius: 10).fill(Theme.surfaceRaised))
+            .fileImporter(isPresented: $showFontImporter, allowedContentTypes: [.font], allowsMultipleSelection: true) { result in
+                if case .success(let urls) = result { model.addFonts(urls) }
+            }
+            .disabled(model.isRunning)
         }
     }
 }

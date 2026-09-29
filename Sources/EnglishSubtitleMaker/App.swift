@@ -245,6 +245,32 @@ enum SelfTest {
                 if !formatOK { failures += 1 }
                 try await check("merge frames", merged, frames: 360, tolerance: 1)
 
+                // 11. Text on the canvas: a boxed, outlined, bold italic text is drawn into
+                //     the frame where it sits, and font files can be read for their families.
+                let textOK: Bool = await MainActor.run {
+                    var t = MergeText()
+                    t.text = "Hello\nWorld"
+                    t.italic = true
+                    t.outline = true
+                    t.box = true
+                    t.boxColor = NSColor(srgbRed: 0, green: 1, blue: 0, alpha: 1)
+                    t.boxOpacity = 1
+                    t.origin = CGPoint(x: 100, y: 100)
+                    guard let r = TextRenderer.render(t), r.size.width > 100, r.size.height > 100,
+                          let frame = MergeRenderer.frame(slides[0], background: CGColor(gray: 0, alpha: 1), texts: [t]) else { return false }
+                    // A pixel inside the box's padding, near its top-left corner, must be the box's green.
+                    let p = Self.pixel(frame, x: 100 + Int(t.size * 0.3), y: 100 + Int(t.size * 0.12))
+                    return p.g > 200 && p.r < 60 && p.b < 60
+                }
+                print(textOK ? "PASS text box drawn into the frame" : "FAIL text box not drawn where expected")
+                if !textOK { failures += 1 }
+                let fontFile = URL(fileURLWithPath: "/System/Library/Fonts/Supplemental/Courier New.ttf")
+                if FileManager.default.fileExists(atPath: fontFile.path) {
+                    let fams = CustomFonts.families(in: fontFile)
+                    print(fams == ["Courier New"] ? "PASS font file families read" : "FAIL font families: \(fams)")
+                    if fams != ["Courier New"] { failures += 1 }
+                }
+
                 // The quick cut must not have fallen back to full re-encoding anywhere.
                 let fell = fallbacks.count
                 print(fell == 0 ? "PASS quick cut used throughout" : "FAIL quick cut fell back \(fell) time(s)")
@@ -258,6 +284,18 @@ enum SelfTest {
             }
         }
         while true { sleep(60) }
+    }
+}
+
+extension SelfTest {
+    /// RGB of one pixel (x, y from the top-left).
+    static func pixel(_ image: CGImage, x: Int, y: Int) -> (r: Int, g: Int, b: Int) {
+        var data = [UInt8](repeating: 0, count: 4)
+        guard let ctx = CGContext(data: &data, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+                                  space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return (0, 0, 0) }
+        ctx.draw(image, in: CGRect(x: -x, y: y - image.height + 1, width: image.width, height: image.height))
+        return (Int(data[0]), Int(data[1]), Int(data[2]))
     }
 }
 
