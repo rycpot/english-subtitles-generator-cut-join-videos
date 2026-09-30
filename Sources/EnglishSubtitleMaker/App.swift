@@ -199,6 +199,14 @@ enum SelfTest {
                 print(hvDiff.isEmpty ? "PASS HEVC cut keeps the format" : "FAIL HEVC cut format: \(hvDiff)")
                 if !hvDiff.isEmpty { failures += 1 }
 
+                // 8b. HEVC in .mp4 (hvc1), cut to .mp4: the quick cut must hold (hev1 output).
+                let hvMP4 = folder.appendingPathComponent("hevc8.mp4")
+                let p6 = try await tools.probe(hvMP4)
+                let pts6 = try await tools.framePTS(hvMP4)
+                let hvMP4Cut = out.appendingPathComponent("hevc8-cut.mp4")
+                try await tools.render([MediaPiece(url: hvMP4, probe: p6, start: 5.3, end: 15.6)], to: hvMP4Cut)
+                try await check("HEVC .mp4 cut 5.3-15.6", hvMP4Cut, frames: expected(pts6, p6, 5.3, 15.6))
+
                 // 9. Audio only: one track copied unchanged, the length of the range.
                 for (name, source, probe, trackIndex, ext) in [("AAC from .mkv", src, p1, 1, "m4a"),
                                                                 ("AC3 5.1 from .mkv", hv, p5, 1, "ac3")] {

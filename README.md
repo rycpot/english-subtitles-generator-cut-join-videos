@@ -63,6 +63,7 @@ Three more tabs use the bundled ffmpeg: cut and join videos **without changing t
 
 - Other codecs (e.g. VP9, AV1, MPEG-4): the cut video is re-encoded at high quality; audio and subtitles are still copied. This is much slower (hours for a full film on an older Mac); the progress line shows the percentage and time left.
 - Joining videos of **different formats** (size, frame rate, codec): they must be converted to one format. By default the app picks the format that makes up **most of the running time**, so the least video is converted; a "Match" menu lets you choose another. Converted joins keep the first audio track only and leave out subtitles.
+- HEVC quick cuts saved as .mp4 use the **hev1** tag (the Apple **hvc1** tag allows only one set of decoder settings per file, and a quick cut has three). They play in VLC, IINA, browsers and YouTube, but not in QuickTime Player or Photos; plain copies and full re-encodes keep hvc1.
 - After a smart cut, the app decodes the frames around every join to check them; if anything is wrong it redoes the job with full re-encoding automatically.
 - Temporary files need about as much free space as the result.
 

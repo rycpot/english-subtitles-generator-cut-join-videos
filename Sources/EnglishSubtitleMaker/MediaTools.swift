@@ -220,7 +220,18 @@ final class MediaTools {
             if let tb = first.video?.timeBase, tb.hasPrefix("1/"), let scale = Int(tb.dropFirst(2)), scale > 0, scale != 90000 {
                 args += ["-video_track_timescale", String(scale)]
             }
-            if first.video?.codecName == "hevc" { args += ["-tag:v", "hvc1"] }
+            if first.video?.codecName == "hevc" {
+                // hvc1 (needed by QuickTime, Photos, iPhone) allows only the decoder
+                // settings stored once in the file header. A quick cut mixes three sets
+                // (re-encoded head, copied middle, re-encoded tail), so it needs hev1,
+                // which carries them in the stream. Plain copies and full re-encodes
+                // keep hvc1.
+                let mixed = smart && plans.contains { plan in plan.contains { !$0.isCopy } }
+                args += ["-tag:v", mixed ? "hev1" : "hvc1"]
+                if mixed {
+                    log(.detail, "HEVC .mp4 saved with the hev1 tag so the quick cut works: it plays in VLC, IINA, browsers and YouTube, but not in QuickTime Player or Photos.")
+                }
+            }
         }
         progress(Double(totalSteps - 1) / Double(totalSteps), "Joining…")
         try await run(args + [output.path], failure: .joinFailed)
