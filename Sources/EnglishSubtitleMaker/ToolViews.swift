@@ -202,8 +202,12 @@ struct RangeEditor: View {
                 Picker("", selection: Binding(get: { fields.endMode }, set: { mode in
                     // The number means something else in the other mode, so start again from zero.
                     guard mode != fields.endMode else { return }
-                    fields.endMode = mode
-                    fields.end = "00:00:00"
+                    // One write: in the Joiner each write goes through the model, and
+                    // two in a row made the second undo the first.
+                    var changed = fields
+                    changed.endMode = mode
+                    changed.end = "00:00:00"
+                    fields = changed
                 })) {
                     ForEach(EndMode.allCases) { Text($0.rawValue).tag($0) }
                 }
@@ -637,7 +641,8 @@ struct JoinPieceRow: View {
                         .help("Remove")
                 }
                 if !piece.whole {
-                    RangeEditor(fields: Binding(get: { piece.fields }, set: { model.update(piece.id, fields: $0) }),
+                    RangeEditor(fields: Binding(get: { model.pieces.first { $0.id == piece.id }?.fields ?? piece.fields },
+                                                set: { model.update(piece.id, fields: $0) }),
                                 fileDuration: piece.info?.duration,
                                 frameDuration: piece.info?.frameDuration ?? 0.04, preview: piece.preview)
                 }
